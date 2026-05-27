@@ -1,4 +1,4 @@
-# Crush Pricing Intelligence MCP Server
+# Syntalic Pricing Intelligence MCP Server
 
 MCP server that gives AI agents access to real-time competitive pricing data across Amazon, Walmart, Costco, and more. Pay-per-query via [x402](https://x402.org) + MPP micropayments with automatic smart routing across Solana, Base, and Tempo.
 
@@ -139,7 +139,7 @@ All env vars are optional — a wallet is auto-generated on first run.
 | `CRUSH_EVM_PRIVATE_KEY` | Override the EVM key (Base + Tempo) from the wallet file |
 | `CRUSH_SOLANA_PRIVATE_KEY` | Override the Solana key from the wallet file |
 | `CRUSH_API_KEY` | Optional API key (payment is the primary auth) |
-| `CRUSH_API_BASE` | API base URL (default `https://api.crushrewards.dev`, HTTPS enforced) |
+| `CRUSH_API_BASE` | API base URL (default `https://api.syntalic.com`, HTTPS enforced) |
 | `CRUSH_SOLANA_RPC_URL` | Custom Solana RPC for balance checks (default `https://api.mainnet-beta.solana.com`, HTTPS enforced) |
 | `CRUSH_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
 
@@ -156,7 +156,7 @@ If both `CRUSH_EVM_PRIVATE_KEY` and `CRUSH_SOLANA_PRIVATE_KEY` are set, `~/.crus
 ## How It Works
 
 1. You call an MCP tool (e.g. `best_price(q: "wireless earbuds")`).
-2. The server makes an HTTP request to the Crush Pricing API.
+2. The server makes an HTTP request to the Syntalic Pricing API.
 3. The API returns `402 Payment Required` with requirements for Solana, Base, and Tempo.
 4. The client runs balance pre-checks, signs a payment on the first eligible chain, and retries.
 5. You get the pricing data back.
@@ -168,8 +168,8 @@ All payment handling is automatic and transparent via the [x402](https://x402.or
 Skip the MCP and hit the API directly:
 
 ```bash
-curl https://api.crushrewards.dev/openapi.json
-curl https://api.crushrewards.dev/v1/shopper/best-price?q=wireless+earbuds  # returns 402
+curl https://api.syntalic.com/openapi.json
+curl https://api.syntalic.com/v1/shopper/best-price?q=wireless+earbuds  # returns 402
 ```
 
 Payments accepted:
