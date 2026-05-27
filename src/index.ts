@@ -29,7 +29,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createServer } from "./server.js";
 import { loadOrCreateWallet } from "./lib/wallet.js";
 
-const DEFAULT_API_BASE = "https://api.crushrewards.dev";
+const DEFAULT_API_BASE = "https://api.syntalic.com";
 const rawApiBase = process.env.CRUSH_API_BASE ?? DEFAULT_API_BASE;
 
 // CRUSH_API_BASE controls where we sign and send USDC payments. Enforce HTTPS
@@ -95,7 +95,7 @@ if (envEvmKey && envSolanaKey) {
   if (isNew) {
     console.error([
       "",
-      "  New multi-chain wallet generated for Crush Pricing Intelligence API",
+      "  New multi-chain wallet generated for Syntalic Pricing Intelligence API",
       "",
       "  Base / Tempo (EVM): " + wallet.evmAddress,
       "  Solana:             " + wallet.solanaAddress,

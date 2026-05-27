@@ -18,7 +18,7 @@ async function ask(
 
 export function printHelp() {
   console.log(`
-  Crush Pricing Intelligence — MCP Server
+  Syntalic Pricing Intelligence — MCP Server
 
   Usage:
     npx @crush-rewards/mcp-server                 Start the MCP server (default)
@@ -59,7 +59,7 @@ export function printHelp() {
     export CRUSH_SOLANA_PRIVATE_KEY=<base58>
     (Overrides the local wallet file. Useful for CI, shared setups, or HSMs.)
 
-  Docs: https://crushrewards.dev
+  Docs: https://www.syntalic.com
 `);
 }
 
@@ -123,7 +123,7 @@ export async function runSetup() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     console.log("");
-    console.log("  Crush Pricing Intelligence — Setup");
+    console.log("  Syntalic Pricing Intelligence — Setup");
     console.log("  ───────────────────────────────────");
     console.log("");
 
@@ -246,14 +246,14 @@ export async function runExportKeys() {
 
 export async function runInfo() {
   console.log("");
-  console.log("  Crush Pricing Intelligence — Status");
+  console.log("  Syntalic Pricing Intelligence — Status");
   console.log("  ────────────────────────────────────");
   console.log("");
 
   const envEvm = process.env.CRUSH_EVM_PRIVATE_KEY;
   const envSolana = process.env.CRUSH_SOLANA_PRIVATE_KEY;
   const apiBase =
-    process.env.CRUSH_API_BASE ?? "https://api.crushrewards.dev (default)";
+    process.env.CRUSH_API_BASE ?? "https://api.syntalic.com (default)";
   const solanaRpc =
     process.env.CRUSH_SOLANA_RPC_URL ??
     "https://api.mainnet-beta.solana.com (default)";
