@@ -1,6 +1,6 @@
 {
   "name": "@crush-rewards/mcp-server",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "MCP server for Crush Pricing Intelligence API — pay-per-query via x402",
   "type": "module",
   "bin": {
