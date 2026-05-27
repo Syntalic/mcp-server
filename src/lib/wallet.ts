@@ -216,7 +216,7 @@ function logMigrations(migrations: string[]): void {
     "",
     "  Wallet file migrated: " + migrations.join(", ") + ".",
     "  Any existing funds are preserved — no addresses were overwritten.",
-    "  Run `npx @crush-rewards/mcp-server --export-keys` to back up the new key material.",
+    "  Run `npx @syntalic/mcp-server --export-keys` to back up the new key material.",
     "",
   ].join("\n"));
 }

@@ -14,8 +14,8 @@ export interface ServerConfig {
 
 export async function createServer(config: ServerConfig): Promise<McpServer> {
   const server = new McpServer({
-    name: "crush-pricing-intelligence",
-    version: "0.4.4",
+    name: "syntalic-pricing-intelligence",
+    version: "0.5.0",
   });
 
   // createPaidFetch validates both keys (throws a helpful error on malformed input)
@@ -29,7 +29,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "wallet_info",
-    "Show your wallet addresses and funding instructions for all supported chains. Call this if a payment fails or to check your wallet. Keys are never exposed via MCP tools — to see addresses + config without revealing keys, the user can run `npx @crush-rewards/mcp-server --info` in their terminal. To export private keys for backup/import, they run `--export-keys` instead.",
+    "Show your wallet addresses and funding instructions for all supported chains. Call this if a payment fails or to check your wallet. Keys are never exposed via MCP tools — to see addresses + config without revealing keys, the user can run `npx @syntalic/mcp-server --info` in their terminal. To export private keys for backup/import, they run `--export-keys` instead.",
     {},
     async () => {
       const lines: string[] = [

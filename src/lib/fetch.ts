@@ -49,7 +49,7 @@ export class PaymentError extends Error {
     super(
       `Payment failed across all supported chains (${detail}). ` +
         `Fund one of your wallets and retry. Run the \`wallet_info\` tool to see addresses. ` +
-        `If you haven't already, run \`npx @crush-rewards/mcp-server --export-keys\` in your ` +
+        `If you haven't already, run \`npx @syntalic/mcp-server --export-keys\` in your ` +
         `terminal to back up your private keys — losing ~/.crush/wallet.json without a backup ` +
         `means losing any funds you add.`,
     );
@@ -78,14 +78,14 @@ function resolveRpcUrl(name: string, envValue: string | undefined, fallback: str
   try {
     parsed = new URL(raw);
   } catch {
-    console.error(`[crush-mcp] ${name} is not a valid URL (${raw}); using default.`);
+    console.error(`[syntalic-mcp] ${name} is not a valid URL (${raw}); using default.`);
     return fallback;
   }
   const host = parsed.hostname.toLowerCase();
   const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
   if (parsed.protocol !== "https:" && !isLoopback) {
     console.error(
-      `[crush-mcp] ${name} must use https:// (got ${parsed.protocol}//${host}); using default.`,
+      `[syntalic-mcp] ${name} must use https:// (got ${parsed.protocol}//${host}); using default.`,
     );
     return fallback;
   }
@@ -207,7 +207,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
   } catch (err) {
     throw new Error(
       `EVM private key is malformed (${sanitizeReason(err, config.evmPrivateKey)}). ` +
-        `Delete ~/.crush/wallet.json and re-run \`npx @crush-rewards/mcp-server --setup\`, ` +
+        `Delete ~/.crush/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
         `or set CRUSH_EVM_PRIVATE_KEY to a valid 0x-prefixed key.`,
     );
   }
@@ -220,7 +220,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
   } catch (err) {
     throw new Error(
       `Solana private key is malformed (${sanitizeReason(err, config.solanaPrivateKey)}). ` +
-        `Delete ~/.crush/wallet.json and re-run \`npx @crush-rewards/mcp-server --setup\`, ` +
+        `Delete ~/.crush/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
         `or set CRUSH_SOLANA_PRIVATE_KEY to a valid base58 key.`,
     );
   }
@@ -373,7 +373,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
           // Proceed with the attempt; record so the final error message
           // surfaces a misconfigured RPC if every chain ends up failing.
           console.error(
-            `[crush-mcp] Solana balance pre-check unavailable (${check.error}); attempting payment.`,
+            `[syntalic-mcp] Solana balance pre-check unavailable (${check.error}); attempting payment.`,
           );
         }
       } else if (network !== BASE_NETWORK_ID) {
@@ -445,7 +445,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
       } else {
         if (!check.checked && check.error) {
           console.error(
-            `[crush-mcp] Tempo balance pre-check unavailable (${check.error}); attempting payment.`,
+            `[syntalic-mcp] Tempo balance pre-check unavailable (${check.error}); attempting payment.`,
           );
         }
         try {

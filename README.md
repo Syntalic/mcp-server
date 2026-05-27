@@ -7,7 +7,7 @@ MCP server that gives AI agents access to real-time competitive pricing data acr
 ### Option A — Let the MCP manage a wallet (recommended for most users)
 
 ```bash
-npx @crush-rewards/mcp-server --setup
+npx @syntalic/mcp-server --setup
 ```
 
 This walks you through:
@@ -18,7 +18,7 @@ After setup:
 
 ```bash
 # Back up your private keys — mandatory before funding
-npx @crush-rewards/mcp-server --export-keys
+npx @syntalic/mcp-server --export-keys
 
 # Fund any of the printed addresses with USDC (or USDC.e on Tempo) and you're ready
 ```
@@ -33,7 +33,7 @@ export CRUSH_EVM_PRIVATE_KEY=0x<your_evm_private_key>
 export CRUSH_SOLANA_PRIVATE_KEY=<your_solana_base58_private_key>
 
 # Still run --setup to wire Claude Code (it won't touch the wallet file when both env vars are set)
-npx @crush-rewards/mcp-server --setup
+npx @syntalic/mcp-server --setup
 ```
 
 When both env vars are set, `~/.crush/wallet.json` is ignored entirely.
@@ -45,9 +45,9 @@ When both env vars are set, `~/.crush/wallet.json` is ignored entirely.
 ```json
 {
   "mcpServers": {
-    "crush-pricing": {
+    "syntalic": {
       "command": "npx",
-      "args": ["-y", "@crush-rewards/mcp-server"]
+      "args": ["-y", "@syntalic/mcp-server"]
     }
   }
 }
@@ -57,7 +57,7 @@ When both env vars are set, `~/.crush/wallet.json` is ignored entirely.
 
 | Command | Purpose |
 |---------|---------|
-| `npx @crush-rewards/mcp-server` | Start the MCP server (default behavior) |
+| `npx @syntalic/mcp-server` | Start the MCP server (default behavior) |
 | `... --setup` | Interactive setup: choose wallet path, wire Claude Code |
 | `... --export-keys` | Print private keys for backup or importing into Phantom/MetaMask |
 | `... --info` | Show wallet addresses, paths, endpoints, and backup status |

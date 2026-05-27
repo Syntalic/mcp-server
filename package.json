@@ -1,10 +1,10 @@
 {
-  "name": "@crush-rewards/mcp-server",
-  "version": "0.4.5",
-  "description": "MCP server for Crush Pricing Intelligence API — pay-per-query via x402",
+  "name": "@syntalic/mcp-server",
+  "version": "0.5.0",
+  "description": "MCP server for the Syntalic Pricing Intelligence API — pay-per-query via x402",
   "type": "module",
   "bin": {
-    "crush-mcp": "./dist/index.js"
+    "syntalic-mcp": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [
@@ -40,7 +40,7 @@
     "x402",
     "pricing",
     "commerce",
-    "crush"
+    "syntalic"
   ],
   "license": "MIT"
 }

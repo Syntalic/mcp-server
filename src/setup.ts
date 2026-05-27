@@ -21,11 +21,11 @@ export function printHelp() {
   Syntalic Pricing Intelligence — MCP Server
 
   Usage:
-    npx @crush-rewards/mcp-server                 Start the MCP server (default)
-    npx @crush-rewards/mcp-server --setup         Interactive setup (wallet + Claude Code)
-    npx @crush-rewards/mcp-server --export-keys   Print your private keys for backup/import
-    npx @crush-rewards/mcp-server --info          Show wallet addresses, paths, and status
-    npx @crush-rewards/mcp-server --help          Show this help
+    npx @syntalic/mcp-server                 Start the MCP server (default)
+    npx @syntalic/mcp-server --setup         Interactive setup (wallet + Claude Code)
+    npx @syntalic/mcp-server --export-keys   Print your private keys for backup/import
+    npx @syntalic/mcp-server --info          Show wallet addresses, paths, and status
+    npx @syntalic/mcp-server --help          Show this help
 
   Available Tools:
 
@@ -166,7 +166,7 @@ export async function runSetup() {
     if (isNew || !wallet.backupAcknowledgedAt) {
       console.log("");
       console.log("  ⚠️  Back up your keys before funding. Run:");
-      console.log("        npx @crush-rewards/mcp-server --export-keys");
+      console.log("        npx @syntalic/mcp-server --export-keys");
       console.log(
         "     If this machine loses the wallet file without a backup, funds",
       );
@@ -314,11 +314,11 @@ async function configureClaudeCode(rl: ReturnType<typeof createInterface>) {
     "add",
     "-s",
     "user",
-    "crush-pricing",
+    "syntalic",
     "--",
     "npx",
     "-y",
-    "@crush-rewards/mcp-server",
+    "@syntalic/mcp-server",
   ];
   const cmdString = "claude " + claudeArgs.join(" ");
 
@@ -326,9 +326,9 @@ async function configureClaudeCode(rl: ReturnType<typeof createInterface>) {
     console.log("");
     console.log("  Add this to ~/.claude/settings.json under mcpServers:");
     console.log("");
-    console.log('    "crush-pricing": {');
+    console.log('    "syntalic": {');
     console.log('      "command": "npx",');
-    console.log('      "args": ["-y", "@crush-rewards/mcp-server"]');
+    console.log('      "args": ["-y", "@syntalic/mcp-server"]');
     console.log("    }");
     console.log("");
     console.log("  Or run this later:");
