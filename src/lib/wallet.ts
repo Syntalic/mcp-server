@@ -1,10 +1,12 @@
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -57,12 +59,75 @@ interface RawWalletConfig {
   backupAcknowledgedAt?: string;
 }
 
-const WALLET_DIR = join(homedir(), ".crush");
+const WALLET_DIR = join(homedir(), ".syntalic");
 const WALLET_FILE = join(WALLET_DIR, "wallet.json");
+
+// Pre-v0.6.0 location (the package predates the Syntalic rebrand). Funded
+// wallets live there on existing installs, so every public entry point below
+// runs migrateLegacyWalletLocation() before touching WALLET_FILE.
+const LEGACY_WALLET_DIR = join(homedir(), ".crush");
+const LEGACY_WALLET_FILE = join(LEGACY_WALLET_DIR, "wallet.json");
 
 export { WALLET_FILE };
 
+let legacyLocationChecked = false;
+
+/**
+ * One-time move of the wallet file from the pre-rebrand ~/.crush location to
+ * ~/.syntalic. Must run before any read or write of WALLET_FILE: if a funded
+ * legacy file were left ignored, `loadOrCreateWallet` would generate a fresh
+ * unfunded wallet that shadows it. Failures throw rather than fall through
+ * for the same reason.
+ */
+function migrateLegacyWalletLocation(): void {
+  if (legacyLocationChecked) return;
+  legacyLocationChecked = true;
+
+  let legacyStat;
+  try {
+    legacyStat = lstatSync(LEGACY_WALLET_FILE);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // nothing to migrate
+    throw err;
+  }
+
+  if (existsSync(WALLET_FILE)) {
+    console.error(
+      `⚠️  Ignoring legacy wallet file at ${LEGACY_WALLET_FILE} — ${WALLET_FILE} already exists ` +
+      `and takes precedence. If the legacy file holds funded keys, back it up before deleting it.`,
+    );
+    return;
+  }
+
+  if (legacyStat.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to migrate ${LEGACY_WALLET_FILE}: it is a symlink. Move your wallet to ` +
+      `${WALLET_FILE} manually.`,
+    );
+  }
+
+  assertNoSymlink(WALLET_DIR);
+  mkdirSync(WALLET_DIR, { recursive: true, mode: 0o700 });
+  try { chmodSync(WALLET_DIR, 0o700); } catch { /* best-effort */ }
+  assertNoSymlink(WALLET_FILE);
+
+  try {
+    renameSync(LEGACY_WALLET_FILE, WALLET_FILE);
+  } catch {
+    // Cross-device rename (e.g. a symlinked home subdirectory) — copy instead,
+    // leaving the original behind as a redundant backup of the same keys.
+    copyFileSync(LEGACY_WALLET_FILE, WALLET_FILE);
+  }
+  try { chmodSync(WALLET_FILE, 0o600); } catch { /* best-effort */ }
+  try { rmdirSync(LEGACY_WALLET_DIR); } catch { /* not empty or shared — leave it */ }
+
+  console.error(
+    `Wallet file moved: ${LEGACY_WALLET_FILE} → ${WALLET_FILE} (same keys, same funds).`,
+  );
+}
+
 export function walletFileExists(): boolean {
+  migrateLegacyWalletLocation();
   return existsSync(WALLET_FILE);
 }
 
@@ -177,6 +242,7 @@ function parseWalletFile(): RawWalletConfig {
  * runs don't re-migrate.
  */
 export async function loadWallet(): Promise<WalletConfig> {
+  migrateLegacyWalletLocation();
   warnIfPermissive();
   if (!existsSync(WALLET_FILE)) {
     throw new Error(`No wallet found at ${WALLET_FILE}`);
@@ -202,6 +268,7 @@ export async function loadWallet(): Promise<WalletConfig> {
  * already migrated by the caller (`runExportKeys` calls `loadWallet` first).
  */
 export function markBackupAcknowledged(): void {
+  migrateLegacyWalletLocation();
   if (!existsSync(WALLET_FILE)) return;
   const wallet = parseWalletFile();
   if (wallet.backupAcknowledgedAt) return;
@@ -222,7 +289,7 @@ function logMigrations(migrations: string[]): void {
 }
 
 /**
- * Loads the wallet from ~/.crush/wallet.json, or generates a new multi-chain
+ * Loads the wallet from ~/.syntalic/wallet.json, or generates a new multi-chain
  * wallet if none exists. If an existing file is missing keys for either chain
  * (v0.2.x wallets have no Solana keys; a hypothetical Solana-only file would
  * have no EVM keys), this function auto-migrates: it fills in the missing
@@ -234,6 +301,7 @@ export async function loadOrCreateWallet(): Promise<{
   wallet: WalletConfig;
   isNew: boolean;
 }> {
+  migrateLegacyWalletLocation();
   warnIfPermissive();
 
   if (existsSync(WALLET_FILE)) {

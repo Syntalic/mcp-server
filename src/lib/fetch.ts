@@ -6,6 +6,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { address as asSolanaAddress, createKeyPairSignerFromBytes } from "@solana/kit";
 import { Mppx, tempo } from "mppx/client";
 import { Challenge } from "mppx";
+import { readEnv } from "./env.js";
 import { deriveAssociatedTokenAccount, getTokenAccountBalance } from "./solana-rpc.js";
 import { getErc20Balance } from "./tempo-rpc.js";
 
@@ -50,7 +51,7 @@ export class PaymentError extends Error {
       `Payment failed across all supported chains (${detail}). ` +
         `Fund one of your wallets and retry. Run the \`wallet_info\` tool to see addresses. ` +
         `If you haven't already, run \`npx @syntalic/mcp-server --export-keys\` in your ` +
-        `terminal to back up your private keys — losing ~/.crush/wallet.json without a backup ` +
+        `terminal to back up your private keys — losing ~/.syntalic/wallet.json without a backup ` +
         `means losing any funds you add.`,
     );
     this.name = "PaymentError";
@@ -207,8 +208,8 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
   } catch (err) {
     throw new Error(
       `EVM private key is malformed (${sanitizeReason(err, config.evmPrivateKey)}). ` +
-        `Delete ~/.crush/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
-        `or set CRUSH_EVM_PRIVATE_KEY to a valid 0x-prefixed key.`,
+        `Delete ~/.syntalic/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
+        `or set SYNTALIC_EVM_PRIVATE_KEY to a valid 0x-prefixed key.`,
     );
   }
 
@@ -220,8 +221,8 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
   } catch (err) {
     throw new Error(
       `Solana private key is malformed (${sanitizeReason(err, config.solanaPrivateKey)}). ` +
-        `Delete ~/.crush/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
-        `or set CRUSH_SOLANA_PRIVATE_KEY to a valid base58 key.`,
+        `Delete ~/.syntalic/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
+        `or set SYNTALIC_SOLANA_PRIVATE_KEY to a valid base58 key.`,
     );
   }
 
@@ -237,14 +238,16 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
     polyfill: false,
   });
 
+  const solanaRpcVar = readEnv("SOLANA_RPC_URL");
   const solanaRpcUrl = resolveRpcUrl(
-    "CRUSH_SOLANA_RPC_URL",
-    process.env.CRUSH_SOLANA_RPC_URL,
+    solanaRpcVar.name,
+    solanaRpcVar.value,
     DEFAULT_SOLANA_RPC_URL,
   );
+  const tempoRpcVar = readEnv("TEMPO_RPC_URL");
   const tempoRpcUrl = resolveRpcUrl(
-    "CRUSH_TEMPO_RPC_URL",
-    process.env.CRUSH_TEMPO_RPC_URL,
+    tempoRpcVar.name,
+    tempoRpcVar.value,
     DEFAULT_TEMPO_RPC_URL,
   );
   const solanaAddress = signer.address;
