@@ -5,9 +5,9 @@
   "homepage": "https://www.syntalic.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Crush-Rewards/crush-mcp-server.git"
+    "url": "git+https://github.com/Syntalic/mcp-server.git"
   },
-  "bugs": "https://github.com/Crush-Rewards/crush-mcp-server/issues",
+  "bugs": "https://github.com/Syntalic/mcp-server/issues",
   "author": "Syntalic (https://www.syntalic.com)",
   "type": "module",
   "bin": {
