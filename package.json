@@ -2,6 +2,13 @@
   "name": "@syntalic/mcp-server",
   "version": "0.6.0",
   "description": "MCP server for the Syntalic Pricing Intelligence API — pay-per-query via x402",
+  "homepage": "https://www.syntalic.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Crush-Rewards/crush-mcp-server.git"
+  },
+  "bugs": "https://github.com/Crush-Rewards/crush-mcp-server/issues",
+  "author": "Syntalic (https://www.syntalic.com)",
   "type": "module",
   "bin": {
     "syntalic-mcp": "./dist/index.js"
