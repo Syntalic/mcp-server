@@ -119,8 +119,16 @@ async function extractSettleFailure(response: Response): Promise<SettleResponse 
       if (typeof maybe.errorReason === "string" || maybe.success === false) {
         return maybe as unknown as SettleResponse;
       }
+      // Only treat a nested error object as a settle failure when it
+      // actually carries a settle reason. The API's RFC 9457 bodies nest
+      // an application error ({code, message}) here — casting that to a
+      // SettleResponse is what turned paid 404 NO_RESULTS into the
+      // misleading "payment rejected: unknown".
       if (maybe.error && typeof maybe.error === "object") {
-        return maybe.error as SettleResponse;
+        const inner = maybe.error as Record<string, unknown>;
+        if (typeof inner.errorReason === "string" || inner.success === false) {
+          return inner as unknown as SettleResponse;
+        }
       }
     }
   } catch {
@@ -128,6 +136,31 @@ async function extractSettleFailure(response: Response): Promise<SettleResponse 
   }
 
   return undefined;
+}
+
+/** An application-level error response (RFC 9457 problem+json, or a body
+ *  carrying an API error code without any settle reason) means the payment
+ *  SETTLED and the API answered — e.g. 404 NO_RESULTS for a product the
+ *  catalog genuinely lacks. Surface it as the API's answer instead of
+ *  misreporting it as a payment failure. */
+async function isApplicationErrorResponse(response: Response): Promise<boolean> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/problem+json")) return true;
+  try {
+    const body = (await response.clone().json()) as unknown;
+    if (body && typeof body === "object") {
+      const maybe = body as Record<string, unknown>;
+      if (typeof maybe.errorReason === "string" || maybe.success === false) return false;
+      if (maybe.error && typeof maybe.error === "object") {
+        const inner = maybe.error as Record<string, unknown>;
+        if (typeof inner.errorReason === "string") return false;
+        if (typeof inner.code === "string") return true;
+      }
+    }
+  } catch {
+    // empty or non-JSON body — not an application error envelope
+  }
+  return false;
 }
 
 function isInsufficientBalance(
@@ -396,6 +429,14 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
       if (networkError) {
         attempts.push({ network, reason: `network error: ${networkError}` });
         continue;
+      }
+
+      // Payment went through but the API answered with an application
+      // error (e.g. 404 NO_RESULTS). Return it so the caller sees the real
+      // problem body — retrying another chain would just pay again for the
+      // same answer.
+      if (await isApplicationErrorResponse(response)) {
+        return response;
       }
 
       if (isInsufficientBalance(network, failure)) {
