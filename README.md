@@ -29,14 +29,14 @@ Skip the generated wallet and supply keys yourself. Recommended if you already u
 
 ```bash
 # Both env vars are required — setting only one will cause the MCP to exit with an error.
-export CRUSH_EVM_PRIVATE_KEY=0x<your_evm_private_key>
-export CRUSH_SOLANA_PRIVATE_KEY=<your_solana_base58_private_key>
+export SYNTALIC_EVM_PRIVATE_KEY=0x<your_evm_private_key>
+export SYNTALIC_SOLANA_PRIVATE_KEY=<your_solana_base58_private_key>
 
 # Still run --setup to wire Claude Code (it won't touch the wallet file when both env vars are set)
 npx @syntalic/mcp-server --setup
 ```
 
-When both env vars are set, `~/.crush/wallet.json` is ignored entirely.
+When both env vars are set, `~/.syntalic/wallet.json` is ignored entirely.
 
 > ⚠️ Do not use your primary wallet here. Use a dedicated low-balance "agent wallet" — per-query amounts are tiny (0.01–0.02 USDC), so a few dollars buys hundreds of queries.
 
@@ -136,14 +136,21 @@ All env vars are optional — a wallet is auto-generated on first run.
 
 | Environment Variable | Description |
 |---------------------|-------------|
-| `CRUSH_EVM_PRIVATE_KEY` | Override the EVM key (Base + Tempo) from the wallet file |
-| `CRUSH_SOLANA_PRIVATE_KEY` | Override the Solana key from the wallet file |
-| `CRUSH_API_KEY` | Optional API key (payment is the primary auth) |
-| `CRUSH_API_BASE` | API base URL (default `https://api.syntalic.com`, HTTPS enforced) |
-| `CRUSH_SOLANA_RPC_URL` | Custom Solana RPC for balance checks (default `https://api.mainnet-beta.solana.com`, HTTPS enforced) |
-| `CRUSH_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
+| `SYNTALIC_EVM_PRIVATE_KEY` | Override the EVM key (Base + Tempo) from the wallet file |
+| `SYNTALIC_SOLANA_PRIVATE_KEY` | Override the Solana key from the wallet file |
+| `SYNTALIC_API_KEY` | Optional API key (payment is the primary auth) |
+| `SYNTALIC_API_BASE` | API base URL (default `https://api.syntalic.com`, HTTPS enforced) |
+| `SYNTALIC_SOLANA_RPC_URL` | Custom Solana RPC for balance checks (default `https://api.mainnet-beta.solana.com`, HTTPS enforced) |
+| `SYNTALIC_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
 
-If both `CRUSH_EVM_PRIVATE_KEY` and `CRUSH_SOLANA_PRIVATE_KEY` are set, `~/.crush/wallet.json` is untouched.
+If both `SYNTALIC_EVM_PRIVATE_KEY` and `SYNTALIC_SOLANA_PRIVATE_KEY` are set, `~/.syntalic/wallet.json` is untouched.
+
+### Upgrading from ≤ 0.5.x
+
+Versions before 0.6.0 used the package's pre-rebrand naming. Both changes are handled automatically:
+
+- **Wallet file** — `~/.crush/wallet.json` is moved to `~/.syntalic/wallet.json` on first run (same keys, same funds).
+- **Env vars** — the old `CRUSH_*` names still work as deprecated fallbacks; the `SYNTALIC_*` name wins when both are set.
 
 ## Security
 

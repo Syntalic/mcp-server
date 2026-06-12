@@ -15,7 +15,7 @@ export interface ServerConfig {
 export async function createServer(config: ServerConfig): Promise<McpServer> {
   const server = new McpServer({
     name: "syntalic-pricing-intelligence",
-    version: "0.5.0",
+    version: "0.6.0",
   });
 
   // createPaidFetch validates both keys (throws a helpful error on malformed input)
@@ -51,7 +51,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         "  --export-keys  Dump private keys for backup or importing into MetaMask/Phantom",
         "",
         "Bring your own keys instead? Set these env vars and the wallet file is ignored:",
-        "  CRUSH_EVM_PRIVATE_KEY, CRUSH_SOLANA_PRIVATE_KEY",
+        "  SYNTALIC_EVM_PRIVATE_KEY, SYNTALIC_SOLANA_PRIVATE_KEY",
       ];
 
       // Fail-safe default: if the caller never set this field (undefined),
@@ -61,7 +61,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         lines.push(
           "",
           "⚠️  You have not exported your private keys yet. Run --export-keys before",
-          "   funding — if ~/.crush/wallet.json is deleted without a backup, any USDC",
+          "   funding — if ~/.syntalic/wallet.json is deleted without a backup, any USDC",
           "   sent to these addresses becomes unrecoverable.",
         );
       }

@@ -6,6 +6,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { address as asSolanaAddress, createKeyPairSignerFromBytes } from "@solana/kit";
 import { Mppx, tempo } from "mppx/client";
 import { Challenge } from "mppx";
+import { readEnv } from "./env.js";
 import { deriveAssociatedTokenAccount, getTokenAccountBalance } from "./solana-rpc.js";
 import { getErc20Balance } from "./tempo-rpc.js";
 
@@ -50,7 +51,7 @@ export class PaymentError extends Error {
       `Payment failed across all supported chains (${detail}). ` +
         `Fund one of your wallets and retry. Run the \`wallet_info\` tool to see addresses. ` +
         `If you haven't already, run \`npx @syntalic/mcp-server --export-keys\` in your ` +
-        `terminal to back up your private keys — losing ~/.crush/wallet.json without a backup ` +
+        `terminal to back up your private keys — losing ~/.syntalic/wallet.json without a backup ` +
         `means losing any funds you add.`,
     );
     this.name = "PaymentError";
@@ -118,8 +119,16 @@ async function extractSettleFailure(response: Response): Promise<SettleResponse 
       if (typeof maybe.errorReason === "string" || maybe.success === false) {
         return maybe as unknown as SettleResponse;
       }
+      // Only treat a nested error object as a settle failure when it
+      // actually carries a settle reason. The API's RFC 9457 bodies nest
+      // an application error ({code, message}) here — casting that to a
+      // SettleResponse is what turned paid 404 NO_RESULTS into the
+      // misleading "payment rejected: unknown".
       if (maybe.error && typeof maybe.error === "object") {
-        return maybe.error as SettleResponse;
+        const inner = maybe.error as Record<string, unknown>;
+        if (typeof inner.errorReason === "string" || inner.success === false) {
+          return inner as unknown as SettleResponse;
+        }
       }
     }
   } catch {
@@ -127,6 +136,31 @@ async function extractSettleFailure(response: Response): Promise<SettleResponse 
   }
 
   return undefined;
+}
+
+/** An application-level error response (RFC 9457 problem+json, or a body
+ *  carrying an API error code without any settle reason) means the payment
+ *  SETTLED and the API answered — e.g. 404 NO_RESULTS for a product the
+ *  catalog genuinely lacks. Surface it as the API's answer instead of
+ *  misreporting it as a payment failure. */
+async function isApplicationErrorResponse(response: Response): Promise<boolean> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/problem+json")) return true;
+  try {
+    const body = (await response.clone().json()) as unknown;
+    if (body && typeof body === "object") {
+      const maybe = body as Record<string, unknown>;
+      if (typeof maybe.errorReason === "string" || maybe.success === false) return false;
+      if (maybe.error && typeof maybe.error === "object") {
+        const inner = maybe.error as Record<string, unknown>;
+        if (typeof inner.errorReason === "string") return false;
+        if (typeof inner.code === "string") return true;
+      }
+    }
+  } catch {
+    // empty or non-JSON body — not an application error envelope
+  }
+  return false;
 }
 
 function isInsufficientBalance(
@@ -207,8 +241,8 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
   } catch (err) {
     throw new Error(
       `EVM private key is malformed (${sanitizeReason(err, config.evmPrivateKey)}). ` +
-        `Delete ~/.crush/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
-        `or set CRUSH_EVM_PRIVATE_KEY to a valid 0x-prefixed key.`,
+        `Delete ~/.syntalic/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
+        `or set SYNTALIC_EVM_PRIVATE_KEY to a valid 0x-prefixed key.`,
     );
   }
 
@@ -220,8 +254,8 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
   } catch (err) {
     throw new Error(
       `Solana private key is malformed (${sanitizeReason(err, config.solanaPrivateKey)}). ` +
-        `Delete ~/.crush/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
-        `or set CRUSH_SOLANA_PRIVATE_KEY to a valid base58 key.`,
+        `Delete ~/.syntalic/wallet.json and re-run \`npx @syntalic/mcp-server --setup\`, ` +
+        `or set SYNTALIC_SOLANA_PRIVATE_KEY to a valid base58 key.`,
     );
   }
 
@@ -237,14 +271,16 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
     polyfill: false,
   });
 
+  const solanaRpcVar = readEnv("SOLANA_RPC_URL");
   const solanaRpcUrl = resolveRpcUrl(
-    "CRUSH_SOLANA_RPC_URL",
-    process.env.CRUSH_SOLANA_RPC_URL,
+    solanaRpcVar.name,
+    solanaRpcVar.value,
     DEFAULT_SOLANA_RPC_URL,
   );
+  const tempoRpcVar = readEnv("TEMPO_RPC_URL");
   const tempoRpcUrl = resolveRpcUrl(
-    "CRUSH_TEMPO_RPC_URL",
-    process.env.CRUSH_TEMPO_RPC_URL,
+    tempoRpcVar.name,
+    tempoRpcVar.value,
     DEFAULT_TEMPO_RPC_URL,
   );
   const solanaAddress = signer.address;
@@ -393,6 +429,14 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
       if (networkError) {
         attempts.push({ network, reason: `network error: ${networkError}` });
         continue;
+      }
+
+      // Payment went through but the API answered with an application
+      // error (e.g. 404 NO_RESULTS). Return it so the caller sees the real
+      // problem body — retrying another chain would just pay again for the
+      // same answer.
+      if (await isApplicationErrorResponse(response)) {
+        return response;
       }
 
       if (isInsufficientBalance(network, failure)) {

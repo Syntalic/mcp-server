@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { spawnSync } from "node:child_process";
+import { readEnv } from "./lib/env.js";
 import {
   loadOrCreateWallet,
   loadWallet,
@@ -55,8 +56,8 @@ export function printHelp() {
            Fund any chain — the client auto-selects whichever has balance.
 
   Bring your own keys (optional):
-    export CRUSH_EVM_PRIVATE_KEY=0x...
-    export CRUSH_SOLANA_PRIVATE_KEY=<base58>
+    export SYNTALIC_EVM_PRIVATE_KEY=0x...
+    export SYNTALIC_SOLANA_PRIVATE_KEY=<base58>
     (Overrides the local wallet file. Useful for CI, shared setups, or HSMs.)
 
   Docs: https://www.syntalic.com
@@ -99,13 +100,13 @@ function printByoInstructions() {
     "  Add these to your shell profile (or the MCP client's env config):",
   );
   console.log("");
-  console.log("    export CRUSH_EVM_PRIVATE_KEY=0x<your_evm_private_key>");
+  console.log("    export SYNTALIC_EVM_PRIVATE_KEY=0x<your_evm_private_key>");
   console.log(
-    "    export CRUSH_SOLANA_PRIVATE_KEY=<your_solana_base58_private_key>",
+    "    export SYNTALIC_SOLANA_PRIVATE_KEY=<your_solana_base58_private_key>",
   );
   console.log("");
   console.log(
-    "  When both are set, the MCP skips ~/.crush/wallet.json entirely.",
+    "  When both are set, the MCP skips ~/.syntalic/wallet.json entirely.",
   );
   console.log("");
   console.log("  Security tips:");
@@ -132,7 +133,7 @@ export async function runSetup() {
       console.log("  No wallet found. How do you want to set up?");
       console.log("");
       console.log("    [1] Generate a new multi-chain wallet (recommended)");
-      console.log("        Creates a fresh wallet at ~/.crush/wallet.json.");
+      console.log("        Creates a fresh wallet at ~/.syntalic/wallet.json.");
       console.log("        Best for most users — isolated from your main funds.");
       console.log("");
       console.log("    [2] Use your own private keys via environment variables");
@@ -203,24 +204,26 @@ function printExampleQueries() {
 
 export async function runExportKeys() {
   if (!walletFileExists()) {
-    const evmSet = Boolean(process.env.CRUSH_EVM_PRIVATE_KEY);
-    const solanaSet = Boolean(process.env.CRUSH_SOLANA_PRIVATE_KEY);
+    const evmVar = readEnv("EVM_PRIVATE_KEY");
+    const solanaVar = readEnv("SOLANA_PRIVATE_KEY");
+    const evmSet = Boolean(evmVar.value);
+    const solanaSet = Boolean(solanaVar.value);
     console.error("");
     console.error("  No wallet file found at " + WALLET_FILE);
     console.error("");
     if (evmSet && solanaSet) {
-      console.error("  You're using env-var keys (CRUSH_EVM_PRIVATE_KEY +");
-      console.error("  CRUSH_SOLANA_PRIVATE_KEY) — they live in your shell, not");
+      console.error("  You're using env-var keys (" + evmVar.name + " +");
+      console.error("  " + solanaVar.name + ") — they live in your shell, not");
       console.error("  on disk, so there's nothing for --export-keys to show.");
     } else if (evmSet || solanaSet) {
       console.error(
         "  Partial env-var setup detected: " +
-          (evmSet ? "CRUSH_EVM_PRIVATE_KEY" : "CRUSH_SOLANA_PRIVATE_KEY") +
+          (evmSet ? evmVar.name : solanaVar.name) +
           " is set",
       );
       console.error(
         "  but " +
-          (evmSet ? "CRUSH_SOLANA_PRIVATE_KEY" : "CRUSH_EVM_PRIVATE_KEY") +
+          (evmSet ? "SYNTALIC_SOLANA_PRIVATE_KEY" : "SYNTALIC_EVM_PRIVATE_KEY") +
           " is missing.",
       );
       console.error(
@@ -229,7 +232,7 @@ export async function runExportKeys() {
     } else {
       console.error("  Run `--setup` to generate a wallet, or set");
       console.error(
-        "  CRUSH_EVM_PRIVATE_KEY + CRUSH_SOLANA_PRIVATE_KEY to bring your own.",
+        "  SYNTALIC_EVM_PRIVATE_KEY + SYNTALIC_SOLANA_PRIVATE_KEY to bring your own.",
       );
     }
     console.error("");
@@ -250,22 +253,24 @@ export async function runInfo() {
   console.log("  ────────────────────────────────────");
   console.log("");
 
-  const envEvm = process.env.CRUSH_EVM_PRIVATE_KEY;
-  const envSolana = process.env.CRUSH_SOLANA_PRIVATE_KEY;
+  const evmVar = readEnv("EVM_PRIVATE_KEY");
+  const solanaVar = readEnv("SOLANA_PRIVATE_KEY");
+  const envEvm = evmVar.value;
+  const envSolana = solanaVar.value;
   const apiBase =
-    process.env.CRUSH_API_BASE ?? "https://api.syntalic.com (default)";
+    readEnv("API_BASE").value ?? "https://api.syntalic.com (default)";
   const solanaRpc =
-    process.env.CRUSH_SOLANA_RPC_URL ??
+    readEnv("SOLANA_RPC_URL").value ??
     "https://api.mainnet-beta.solana.com (default)";
   const tempoRpc =
-    process.env.CRUSH_TEMPO_RPC_URL ?? "https://rpc.tempo.xyz (default)";
+    readEnv("TEMPO_RPC_URL").value ?? "https://rpc.tempo.xyz (default)";
 
   if (envEvm && envSolana) {
     console.log(
-      "  Wallet source: environment variables (CRUSH_EVM_PRIVATE_KEY + CRUSH_SOLANA_PRIVATE_KEY)",
+      "  Wallet source: environment variables (" + evmVar.name + " + " + solanaVar.name + ")",
     );
     console.log(
-      "                 ~/.crush/wallet.json is ignored when both env vars are set.",
+      "                 ~/.syntalic/wallet.json is ignored when both env vars are set.",
     );
   } else if (walletFileExists()) {
     // Read-only — we never want --info to create a wallet from scratch. If
@@ -289,9 +294,9 @@ export async function runInfo() {
     }
   } else {
     console.log(
-      "  No wallet found. Run `--setup` to create one or set CRUSH_EVM_PRIVATE_KEY",
+      "  No wallet found. Run `--setup` to create one or set SYNTALIC_EVM_PRIVATE_KEY",
     );
-    console.log("  + CRUSH_SOLANA_PRIVATE_KEY to bring your own.");
+    console.log("  + SYNTALIC_SOLANA_PRIVATE_KEY to bring your own.");
   }
 
   console.log("");
