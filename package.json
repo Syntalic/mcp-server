@@ -11,7 +11,7 @@
   "author": "Syntalic (https://www.syntalic.com)",
   "type": "module",
   "bin": {
-    "syntalic-mcp": "./dist/index.js"
+    "syntalic-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [
