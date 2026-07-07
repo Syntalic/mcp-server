@@ -123,6 +123,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   // Free discovery reads: the /v1/public/* surface is unauthenticated and never
   // payment-gated, so it uses a plain fetch (no wallet / no x402 handshake).
+  // Bounded at 15s: without a signal, a black-holed connection would hang the
+  // tool call for as long as the MCP client tolerates.
+  const PUBLIC_FETCH_TIMEOUT_MS = 15_000;
   async function queryPublic(path: string, params: Record<string, string | undefined>) {
     const url = new URL(path, config.apiBase);
     for (const [k, v] of Object.entries(params)) {
@@ -130,7 +133,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     }
     let res: Response;
     try {
-      res = await fetch(url.toString());
+      res = await fetch(url.toString(), { signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS) });
     } catch (err) {
       return {
         content: [{ type: "text" as const, text: `Network error: ${(err as Error).message}` }],
@@ -144,7 +147,17 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         isError: true,
       };
     }
-    const data = await res.json();
+    // A proxy/LB can hand back non-JSON with a 200; surface it as a tool
+    // error instead of throwing out of the handler.
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return {
+        content: [{ type: "text" as const, text: "Error: API returned a non-JSON response" }],
+        isError: true,
+      };
+    }
     return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
   }
 
