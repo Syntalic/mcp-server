@@ -121,6 +121,125 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     };
   }
 
+  // Free discovery reads: the /v1/public/* surface is unauthenticated and never
+  // payment-gated, so it uses a plain fetch (no wallet / no x402 handshake).
+  // Bounded at 15s: without a signal, a black-holed connection would hang the
+  // tool call for as long as the MCP client tolerates.
+  const PUBLIC_FETCH_TIMEOUT_MS = 15_000;
+  async function queryPublic(path: string, params: Record<string, string | undefined>) {
+    const url = new URL(path, config.apiBase);
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined) url.searchParams.set(k, v);
+    }
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), { signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS) });
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Network error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      return {
+        content: [{ type: "text" as const, text: `Error ${res.status}: ${text}` }],
+        isError: true,
+      };
+    }
+    // A proxy/LB can hand back non-JSON with a 200; surface it as a tool
+    // error instead of throwing out of the handler.
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return {
+        content: [{ type: "text" as const, text: "Error: API returned a non-JSON response" }],
+        isError: true,
+      };
+    }
+    return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+  }
+
+  // ── Public discovery (FREE — no payment) ────────────────────────
+  // Understand the shape/coverage of the catalog before spending on a paid query.
+
+  server.tool(
+    "catalog_overview",
+    "See the shape of the catalog: total unique products, listings, brands, categories, retailers, price observations, and the last-updated timestamp. FREE — no payment. Call this first to understand what data exists before spending on a paid query.",
+    {},
+    async () => queryPublic("/v1/public/stats", {}),
+  );
+
+  server.tool(
+    "browse_categories",
+    "Browse the product category tree with per-node product counts. FREE — no payment. Pass parent_path to drill into a subtree.",
+    {
+      parent_path: z
+        .string()
+        .optional()
+        .describe("Category path to list descendants of (e.g. electronics). Omit for top-level."),
+      depth: z.number().int().min(1).max(3).optional().describe("Levels below parent_path (default 1, max 3)"),
+      limit: z.number().int().min(1).max(500).optional().describe("Page size (default 200)"),
+      offset: z.number().int().min(0).optional().describe("Pagination offset"),
+    },
+    async ({ parent_path, depth, limit, offset }) =>
+      queryPublic("/v1/public/categories", {
+        parent_path,
+        depth: depth?.toString(),
+        limit: limit?.toString(),
+        offset: offset?.toString(),
+      }),
+  );
+
+  server.tool(
+    "list_retailers",
+    "List the retailers (platforms) in the catalog with product counts, countries covered, and freshness. FREE — no payment.",
+    {
+      limit: z.number().int().min(1).max(500).optional().describe("Page size (default 100)"),
+      offset: z.number().int().min(0).optional().describe("Pagination offset"),
+    },
+    async ({ limit, offset }) =>
+      queryPublic("/v1/public/retailers", { limit: limit?.toString(), offset: offset?.toString() }),
+  );
+
+  server.tool(
+    "list_brands",
+    "List the brands in the catalog with product counts. FREE — no payment. Optional q prefix-matches the brand name (case/punctuation-insensitive: 'sam' → Samsung).",
+    {
+      q: z.string().optional().describe("Prefix filter on the brand name"),
+      limit: z.number().int().min(1).max(500).optional().describe("Page size (default 100)"),
+      offset: z.number().int().min(0).optional().describe("Pagination offset"),
+    },
+    async ({ q, limit, offset }) =>
+      queryPublic("/v1/public/brands", { q, limit: limit?.toString(), offset: offset?.toString() }),
+  );
+
+  server.tool(
+    "coverage_map",
+    "See where the catalog is deep vs thin: priced product counts and a quality status (serving/thin/unmanaged/empty) per retailer × country × category. FREE — no payment. Use this to check whether a paid query will hit good data before you spend. Filter by country, platform, category_root, or quality_status.",
+    {
+      country: countrySchema,
+      platform: z.string().optional().describe("Filter to a platform (e.g. amazon, walmart)"),
+      category_root: z.string().optional().describe("Filter to a top-level category (e.g. electronics)"),
+      quality_status: z
+        .enum(["serving", "thin", "unmanaged", "empty"])
+        .optional()
+        .describe("Filter to a coverage tier"),
+      limit: z.number().int().min(1).max(1000).optional().describe("Page size (default 200)"),
+      offset: z.number().int().min(0).optional().describe("Pagination offset"),
+    },
+    async ({ country, platform, category_root, quality_status, limit, offset }) =>
+      queryPublic("/v1/public/coverage", {
+        country,
+        platform,
+        category_root,
+        quality_status,
+        limit: limit?.toString(),
+        offset: offset?.toString(),
+      }),
+  );
+
   // ── Shopper ($0.01/query) ───────────────────────────────────────
 
   server.tool(
