@@ -86,6 +86,18 @@ Balance pre-checks are **optimizations**. If an RPC is rate-limited or down, the
 
 ## Tools
 
+### Public discovery (free — no payment)
+
+Understand the shape and coverage of the catalog before spending on a paid query.
+
+| Tool | Description |
+|------|-------------|
+| `catalog_overview` | Total products, brands, categories, retailers, observations + last-updated |
+| `browse_categories` | Category tree with per-node product counts |
+| `list_retailers` | Retailers (platforms) with product counts, countries, freshness |
+| `list_brands` | Brands with product counts (optional `q` prefix filter) |
+| `coverage_map` | Where the catalog is deep vs thin — quality status per retailer × country × category |
+
 ### Shopper ($0.01/query)
 
 | Tool | Description |
