@@ -371,6 +371,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
 
   const paidFetch: typeof globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
+    request.headers.set("X-Syntalic-Client", "mcp");
     const savedRequest = request.clone();
     const firstResponse = await baseFetch(request);
     if (firstResponse.status !== 402) return firstResponse;
