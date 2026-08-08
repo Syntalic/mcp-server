@@ -381,5 +381,56 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       query("/v1/analyst/category-summary", { category, country, retailer, days: days?.toString() }),
   );
 
+  // ── Reference / taxonomy ($0.01 per REQUEST, up to 100 ids) ──────
+  // Batch-first on purpose: the realistic caller is classifying a catalog, not
+  // looking up one node, so the price is per request rather than per lookup
+  // (~$0.0001 an item at full batch). Version-pinned rather than freshness-
+  // pinned — answers change when GS1 publishes a release, not with observation
+  // age — so responses carry X-GPC-Release / X-Map-Version.
+
+  server.tool(
+    "classify_product_type",
+    "Resolve product types to GS1 GPC bricks — the identity of WHAT a product is, " +
+      "independent of which category a retailer shelved it under. Pass `q` with " +
+      "product-type phrases ('protein bars') or `browse_id` with Amazon browse node " +
+      "ids, up to 100 comma-separated values, but not both. Use this when a question " +
+      "is about a product TYPE that spans categories: protein bars sit under Health at " +
+      "one retailer and Grocery at another, so a category filter answers from a " +
+      "fraction of the data. Unresolvable inputs come back with an empty/null gpc " +
+      "rather than a nearest guess, and the response lines up 1:1 with the request, so " +
+      "misses are visible. Costs $0.01 per request.",
+    {
+      q: z
+        .string()
+        .optional()
+        .describe("Comma-separated product-type phrases, e.g. 'protein bars,laptops'"),
+      browse_id: z
+        .string()
+        .optional()
+        .describe("Comma-separated Amazon browse node ids, e.g. '300334,12899121'"),
+    },
+    async ({ q, browse_id }) => query("/v1/reference/classify", { q, browse_id }),
+  );
+
+  server.tool(
+    "gpc_reverse_lookup",
+    "Reverse the crosswalk: given GS1 GPC codes, return the Amazon browse nodes mapped " +
+      "onto them. Up to 100 comma-separated codes. `browse_node_count` is always the " +
+      "true total while `browse_ids` is capped per code (see `ids_per_code_cap`), so " +
+      "truncation is detectable rather than silent. Costs $0.01 per request.",
+    { gpc_code: z.string().describe("Comma-separated 8-digit GPC codes, e.g. '10001159'") },
+    async ({ gpc_code }) => query("/v1/reference/reverse", { gpc_code }),
+  );
+
+  server.tool(
+    "gpc_brick_attributes",
+    "Return the GS1 attribute schema for one or more GPC bricks — attribute names and " +
+      "the controlled vocabulary each permits (for example Formation, If Organic). Up " +
+      "to 100 comma-separated codes. Use it to discover what GS1 defines for a product " +
+      "category before asking about it. Costs $0.01 per request.",
+    { gpc_code: z.string().describe("Comma-separated 8-digit GPC codes, e.g. '10000002'") },
+    async ({ gpc_code }) => query("/v1/reference/brick-attributes", { gpc_code }),
+  );
+
   return server;
 }

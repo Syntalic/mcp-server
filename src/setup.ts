@@ -49,6 +49,11 @@ export function printHelp() {
       retailer_index          Pricing index for a retailer
       category_summary        Comprehensive category summary
 
+    Reference (0.01 USDC/request, up to 100 ids per request)
+      classify_product_type   Product type or browse node -> GS1 GPC brick
+      gpc_reverse_lookup      GPC code -> the browse nodes mapped onto it
+      gpc_brick_attributes    GS1 attribute schema for a brick
+
     Utility
       wallet_info             Show wallet addresses and funding instructions
 
