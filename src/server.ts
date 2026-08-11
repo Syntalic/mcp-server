@@ -398,7 +398,13 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "one retailer and Grocery at another, so a category filter answers from a " +
       "fraction of the data. Unresolvable inputs come back with an empty/null gpc " +
       "rather than a nearest guess, and the response lines up 1:1 with the request, so " +
-      "misses are visible. Costs $0.01 per request.",
+      "misses are visible. A phrase can resolve to SEVERAL bricks when they are " +
+      "co-equal (same product type at finer granularity, e.g. 'running' -> Athletic " +
+      "Footwear General Purpose + Specialist); `match_kind` is 'co-equal' there and " +
+      "each entry carries its own `source`. Each brick also reports `is_catchall` " +
+      "(true when GS1 files it as a residual bucket like 'Small Cooking Appliances " +
+      "Other', so the match is exact but the destination is broad) and " +
+      "`attributes_defined`. Costs $0.01 per request.",
     {
       q: z
         .string()
@@ -417,7 +423,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "Reverse the crosswalk: given GS1 GPC codes, return the Amazon browse nodes mapped " +
       "onto them. Up to 100 comma-separated codes. `browse_node_count` is always the " +
       "true total while `browse_ids` is capped per code (see `ids_per_code_cap`), so " +
-      "truncation is detectable rather than silent. Costs $0.01 per request.",
+      "truncation is detectable rather than silent. Node counts vary widely by code " +
+      "and that is the retailer's shelving, not a coverage gap: a code reached by 2 " +
+      "nodes is not thinner data than one reached by 20. Costs $0.01 per request.",
     { gpc_code: z.string().describe("Comma-separated 8-digit GPC codes, e.g. '10001159'") },
     async ({ gpc_code }) => query("/v1/reference/reverse", { gpc_code }),
   );
@@ -427,7 +435,10 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "Return the GS1 attribute schema for one or more GPC bricks — attribute names and " +
       "the controlled vocabulary each permits (for example Formation, If Organic). Up " +
       "to 100 comma-separated codes. Use it to discover what GS1 defines for a product " +
-      "category before asking about it. Costs $0.01 per request.",
+      "category before asking about it. An empty attribute list is not ambiguous: read " +
+      "`attributes_defined` on the brick, false meaning GS1 genuinely defines none " +
+      "(739 bricks do) rather than the schema having been lost in transit. Costs $0.01 " +
+      "per request.",
     { gpc_code: z.string().describe("Comma-separated 8-digit GPC codes, e.g. '10000002'") },
     async ({ gpc_code }) => query("/v1/reference/brick-attributes", { gpc_code }),
   );
