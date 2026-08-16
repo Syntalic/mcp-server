@@ -48,6 +48,7 @@ export function printHelp() {
       price_dispersion        Price variance across retailers
       retailer_index          Pricing index for a retailer
       category_summary        Comprehensive category summary
+      price_bands             Price window + tiers for a category shelf
 
     Reference (0.01 USDC/request, up to 100 ids per request)
       classify_product_type   Product type or browse node -> GS1 GPC brick

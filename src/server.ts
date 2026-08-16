@@ -388,6 +388,23 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   );
 
   server.tool(
+    "price_bands",
+    "Get the price architecture of one category shelf: the window that defines " +
+      "'similarly priced' there, plus the shelf's price tiers (entry through luxury). " +
+      "Use it to decide whether two products actually compete on price, or to place a " +
+      "price within its shelf. Scoped by a browse-node path, not a category term. " +
+      "Costs $0.02.",
+    {
+      node: z
+        .string()
+        .describe(
+          "Category path — 'electronics', 'electronics/headphones', or a deeper rung",
+        ),
+    },
+    async ({ node }) => query("/v1/analyst/price-bands", { node }),
+  );
+
+  server.tool(
     "category_summary",
     "Get a comprehensive pricing summary for a category. Costs $0.02.",
     { category: z.string().describe("Product category"), country: countrySchema, retailer: retailerSchema, days: daysSchema },
