@@ -143,7 +143,11 @@ async function extractSettleFailure(response: Response): Promise<SettleResponse 
  *  SETTLED and the API answered — e.g. 404 NO_RESULTS for a product the
  *  catalog genuinely lacks. Surface it as the API's answer instead of
  *  misreporting it as a payment failure. */
-async function isApplicationErrorResponse(response: Response): Promise<boolean> {
+export async function isApplicationErrorResponse(response: Response): Promise<boolean> {
+  // 402 Payment Required is the x402 challenge, not an application answer.
+  // Treating problem+json 402 as "the API answered" leaked the raw 402 body
+  // to MCP tools (classify/reverse, 2026-08-14).
+  if (response.status === 402) return false;
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("application/problem+json")) return true;
   try {

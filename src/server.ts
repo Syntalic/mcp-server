@@ -107,6 +107,20 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       throw err;
     }
 
+    if (res.status === 402) {
+      // paidFetch must settle or throw PaymentError. A 402 here is a client
+      // bug — never return the payment-required body as the tool result.
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Payment required after retry. This is an MCP client bug, not an API miss. Run wallet_info.",
+          },
+        ],
+        isError: true,
+      };
+    }
+
     if (!res.ok) {
       const text = await res.text();
       return {
