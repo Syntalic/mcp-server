@@ -1,6 +1,6 @@
 {
   "name": "@syntalic/mcp-server",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "MCP server for the Syntalic Pricing Intelligence API — pay-per-query via x402",
   "homepage": "https://www.syntalic.com",
   "repository": {
