@@ -1,7 +1,20 @@
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { createPaidFetch, PaymentError } from "./lib/fetch.js";
-import { countrySchema, retailerSchema, daysSchema } from "./lib/schemas.js";
+import {
+  countrySchema,
+  retailerSchema,
+  daysSchema,
+  windowSchema,
+  platformSchema,
+  organicOnlySchema,
+  socialLimitSchema,
+} from "./lib/schemas.js";
+
+// Read the real version rather than a second hand-maintained copy: this said
+// 0.6.0 while the package was on 0.9.0, so every client saw the wrong version.
+const VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
 export interface ServerConfig {
   apiBase: string;
@@ -15,7 +28,7 @@ export interface ServerConfig {
 export async function createServer(config: ServerConfig): Promise<McpServer> {
   const server = new McpServer({
     name: "syntalic-pricing-intelligence",
-    version: "0.6.0",
+    version: VERSION,
   });
 
   // createPaidFetch validates both keys (throws a helpful error on malformed input)
@@ -472,6 +485,335 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "per request.",
     { gpc_code: z.string().describe("Comma-separated 8-digit GPC codes, e.g. '10000002'") },
     async ({ gpc_code }) => query("/v1/reference/brick-attributes", { gpc_code }),
+  );
+
+
+  // ── Marketing and Analyst routes the MCP had never exposed ──────
+  //
+  // These five are priced and live in the API's tier map but had no tool, so
+  // an agent could not reach them at all. Added alongside the social tier so
+  // the MCP covers the paid surface rather than a subset of it.
+
+  server.tool(
+    "brand_breakdown",
+    "Break a brand's assortment down by category, so you can see what a brand actually " +
+      "sells rather than what it is known for. Costs $0.01.",
+    { brand: z.string().describe("Brand name"), country: countrySchema },
+    async ({ brand, country }) => query("/v1/marketing/brand-breakdown", { brand, country }),
+  );
+
+  server.tool(
+    "retailer_assortment",
+    "Find which retail chains carry a brand or a category. You must pass at least one of " +
+      "`brand` or `category`; passing neither is rejected, because an unbounded scan is " +
+      "not a question. Costs $0.01.",
+    {
+      brand: z.string().optional().describe("Brand name"),
+      category: z.string().optional().describe("Product category"),
+      country: countrySchema,
+    },
+    async ({ brand, category, country }) =>
+      query("/v1/marketing/retailer-assortment", { brand, category, country }),
+  );
+
+  server.tool(
+    "availability_index",
+    "Measure out-of-stock rates by retailer or by category. Aggregate by seller to " +
+      "compare chains, or by category_root to compare shelves. You must pass at least " +
+      "one of `category` or `brand`. Costs $0.01.",
+    {
+      category: z.string().optional().describe("Product category"),
+      brand: z.string().optional().describe("Brand name"),
+      country: countrySchema,
+      aggregate_by: z
+        .enum(["seller", "category_root"])
+        .optional()
+        .describe("Group results by retailer or by category root. Defaults to seller."),
+    },
+    async ({ category, brand, country, aggregate_by }) =>
+      query("/v1/marketing/availability-index", { category, brand, country, aggregate_by }),
+  );
+
+  server.tool(
+    "category_concentration",
+    "Measure how concentrated a category is: whether a few brands own the shelf or it " +
+      "is genuinely fragmented. Costs $0.02.",
+    { category: z.string().describe("Product category"), country: countrySchema },
+    async ({ category, country }) =>
+      query("/v1/analyst/category-concentration", { category, country }),
+  );
+
+  server.tool(
+    "price_change_leaders",
+    "Rank the biggest price movers in a category or for a brand over a 7, 30 or 90 day " +
+      "window. You must pass at least one of `category` or `brand`. Costs $0.02.",
+    {
+      category: z.string().optional().describe("Product category"),
+      brand: z.string().optional().describe("Brand name"),
+      country: countrySchema,
+      win: z
+        .union([z.literal(7), z.literal(30), z.literal(90)])
+        .optional()
+        .describe("Lookback window in days: 7, 30 or 90. Defaults to 30."),
+      limit: z.number().int().min(1).max(100).optional().describe("Max movers to return (default 15)"),
+    },
+    async ({ category, brand, country, win, limit }) =>
+      query("/v1/analyst/price-change-leaders", {
+        category,
+        brand,
+        country,
+        win: win?.toString(),
+        limit: limit?.toString(),
+      }),
+  );
+
+  // ── Social ($0.03/query) ────────────────────────────────────────
+  //
+  // Corpus is TikTok and Instagram only, and every route is scoped to one
+  // category root: there is no wildcard, because these answers are ranked
+  // comparisons and a cross-category ranking would be meaningless.
+  //
+  // A 404 NOT_PUBLISHED from any of these is a gap in what we publish, NOT a
+  // finding about the category. Do not report it as "no activity". Nothing is
+  // billed for that response.
+  //
+  // `organic_only` is only sent when true. The API already defaults it to
+  // false, so omitting it is identical in effect and avoids any chance of a
+  // stringified "false" being read as truthy on the way through.
+
+  server.tool(
+    "creator_index",
+    "Rank the creators driving mention volume in a category. Use it to find who is " +
+      "actually talking about a shelf, not who has the biggest following. Costs $0.03.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      subcategory: z.string().optional().describe("Narrow to one subcategory"),
+      limit: socialLimitSchema,
+    },
+    async ({ category, window, platform, organic_only, subcategory, limit }) =>
+      query("/v1/social/creator-index", {
+        category,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        subcategory,
+        limit: limit?.toString(),
+      }),
+  );
+
+  server.tool(
+    "brand_share",
+    "Share of social conversation by brand within a category. This is share of " +
+      "ATTENTION, not share of shelf or of sales. Costs $0.03.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      subcategory: z.string().optional().describe("Switches the axis to this subcategory"),
+      brand: z.string().optional().describe("Brand name to focus on"),
+      limit: socialLimitSchema,
+    },
+    async ({ category, window, platform, organic_only, subcategory, brand, limit }) =>
+      query("/v1/social/brand-share", {
+        category,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        subcategory,
+        brand,
+        limit: limit?.toString(),
+      }),
+  );
+
+  server.tool(
+    "category_structure",
+    "Show which subcategories own a category's conversation. Use it before brand-level " +
+      "questions, to see where the attention actually sits. NOTE: this rollup is not " +
+      "published yet and currently returns 404 NOT_PUBLISHED for every category; that is " +
+      "a gap in what we publish, not a finding, and nothing is billed. Costs $0.03.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      limit: socialLimitSchema,
+    },
+    async ({ category, window, platform, organic_only, limit }) =>
+      query("/v1/social/category-structure", {
+        category,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        limit: limit?.toString(),
+      }),
+  );
+
+  server.tool(
+    "brand_momentum",
+    "Rank brands by conversation momentum in a category: who is rising, falling, or " +
+      "newly appearing. `status: new` is emerging-brand detection. Costs $0.03.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      subcategory: z.string().optional().describe("Narrow to one subcategory"),
+      status: z
+        .enum(["new", "rising", "falling", "all"])
+        .optional()
+        .describe("Restrict to one movement class. 'new' = emerging-brand detection. Defaults to all."),
+      limit: socialLimitSchema,
+    },
+    async ({ category, window, platform, organic_only, subcategory, status, limit }) =>
+      query("/v1/social/brand-momentum", {
+        category,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        subcategory,
+        status,
+        limit: limit?.toString(),
+      }),
+  );
+
+  server.tool(
+    "topic_trends",
+    "Emerging conversation topics in a category. NOTE: this rollup is not published yet " +
+      "and currently returns 404 NOT_PUBLISHED for every category; that is a gap in what " +
+      "we publish, not a finding, and nothing is billed. Costs $0.03.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      limit: socialLimitSchema,
+    },
+    async ({ category, window, platform, organic_only, limit }) =>
+      query("/v1/social/topic-trends", {
+        category,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        limit: limit?.toString(),
+      }),
+  );
+
+  server.tool(
+    "product_type_trends",
+    "Attention by product type within a category, so you can see which kind of thing is " +
+      "being talked about rather than which brand. NOTE: this rollup is not published yet " +
+      "and currently returns 404 NOT_PUBLISHED for every category; that is a gap in what " +
+      "we publish, not a finding, and nothing is billed. Costs $0.03.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      subcategory: z.string().optional().describe("Narrow to one subcategory"),
+      limit: socialLimitSchema,
+    },
+    async ({ category, window, platform, organic_only, subcategory, limit }) =>
+      query("/v1/social/product-type-trends", {
+        category,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        subcategory,
+        limit: limit?.toString(),
+      }),
+  );
+
+  server.tool(
+    "social_series",
+    "Weekly mentions and views time series for one subject: a brand, a category, or a " +
+      "subcategory. Use it to chart a trend rather than rank a moment. `subject` is " +
+      "required unless subject_kind is 'category'. Costs $0.03.",
+    {
+      category: z.string().describe("Category root slug the subject is scoped to"),
+      subject_kind: z
+        .enum(["brand", "category", "subcategory"])
+        .optional()
+        .describe("What kind of subject to chart. Defaults to brand."),
+      subject: z
+        .string()
+        .optional()
+        .describe("The subject key (brand key or subcategory slug). Required unless subject_kind='category'."),
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      weeks: z
+        .number()
+        .int()
+        .min(1)
+        .max(104)
+        .optional()
+        .describe("How many trailing ISO weeks to return (default 26, max 104)"),
+    },
+    async ({ category, subject_kind, subject, platform, organic_only, weeks }) =>
+      query("/v1/social/series", {
+        category,
+        subject_kind,
+        subject,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        weeks: weeks?.toString(),
+      }),
+  );
+
+  // ── Scout / cross-domain ($0.05/query) ──────────────────────────
+  //
+  // These are the only routes that bind BOTH corpora to one category axis and
+  // one brand key. Nobody holding just the social corpus or just the shelf can
+  // reproduce them, which is why they are priced above the social tier.
+
+  server.tool(
+    "attention_vs_shelf",
+    "Rank brands by the gap between share-of-conversation and share-of-shelf. A brand " +
+      "with attention and no distribution is a stocking opportunity; the reverse is " +
+      "shelf that is not earning its space. Costs $0.05.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      country: countrySchema,
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      limit: socialLimitSchema,
+    },
+    async ({ category, country, window, platform, organic_only, limit }) =>
+      query("/v1/social/attention-vs-shelf", {
+        category,
+        country,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        limit: limit?.toString(),
+      }),
+  );
+
+  server.tool(
+    "launch_buzz",
+    "New shelf arrivals set against the conversation around their brand, so you can " +
+      "tell a launch that landed from one that shipped in silence. Costs $0.05.",
+    {
+      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      country: countrySchema,
+      window: windowSchema,
+      platform: platformSchema,
+      organic_only: organicOnlySchema,
+      limit: socialLimitSchema,
+    },
+    async ({ category, country, window, platform, organic_only, limit }) =>
+      query("/v1/social/launch-buzz", {
+        category,
+        country,
+        window,
+        platform,
+        organic_only: organic_only ? "true" : undefined,
+        limit: limit?.toString(),
+      }),
   );
 
   return server;

@@ -1,7 +1,7 @@
 {
   "name": "@syntalic/mcp-server",
-  "version": "0.9.0",
-  "description": "MCP server for the Syntalic Pricing Intelligence API — pay-per-query via x402",
+  "version": "0.10.0",
+  "description": "MCP server for the Syntalic Pricing Intelligence API \u2014 pay-per-query via x402",
   "homepage": "https://www.syntalic.com",
   "repository": {
     "type": "git",
@@ -20,7 +20,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && npm test",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "check:parity": "tsx scripts/check-parity.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
