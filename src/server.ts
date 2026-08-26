@@ -504,8 +504,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "retailer_assortment",
-    "Find which retail chains carry a brand or a category. Pass a brand, a category, or " +
-      "both. Costs $0.01.",
+    "Find which retail chains carry a brand or a category. You must pass at least one of " +
+      "`brand` or `category`; passing neither is rejected, because an unbounded scan is " +
+      "not a question. Costs $0.01.",
     {
       brand: z.string().optional().describe("Brand name"),
       category: z.string().optional().describe("Product category"),
@@ -518,7 +519,8 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "availability_index",
     "Measure out-of-stock rates by retailer or by category. Aggregate by seller to " +
-      "compare chains, or by category_root to compare shelves. Costs $0.01.",
+      "compare chains, or by category_root to compare shelves. You must pass at least " +
+      "one of `category` or `brand`. Costs $0.01.",
     {
       category: z.string().optional().describe("Product category"),
       brand: z.string().optional().describe("Brand name"),
@@ -544,7 +546,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "price_change_leaders",
     "Rank the biggest price movers in a category or for a brand over a 7, 30 or 90 day " +
-      "window. Costs $0.02.",
+      "window. You must pass at least one of `category` or `brand`. Costs $0.02.",
     {
       category: z.string().optional().describe("Product category"),
       brand: z.string().optional().describe("Brand name"),
@@ -629,8 +631,10 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "category_structure",
-    "Show which subcategories own a category's conversation. Use it before " +
-      "brand-level questions, to see where the attention actually sits. Costs $0.03.",
+    "Show which subcategories own a category's conversation. Use it before brand-level " +
+      "questions, to see where the attention actually sits. NOTE: this rollup is not " +
+      "published yet and currently returns 404 NOT_PUBLISHED for every category; that is " +
+      "a gap in what we publish, not a finding, and nothing is billed. Costs $0.03.",
     {
       category: z.string().describe("Category root slug, e.g. 'beauty'"),
       window: windowSchema,
@@ -678,7 +682,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "topic_trends",
-    "Emerging conversation topics in a category. Costs $0.03.",
+    "Emerging conversation topics in a category. NOTE: this rollup is not published yet " +
+      "and currently returns 404 NOT_PUBLISHED for every category; that is a gap in what " +
+      "we publish, not a finding, and nothing is billed. Costs $0.03.",
     {
       category: z.string().describe("Category root slug, e.g. 'beauty'"),
       window: windowSchema,
@@ -698,8 +704,10 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "product_type_trends",
-    "Attention by product type within a category, so you can see which kind of thing " +
-      "is being talked about rather than which brand. Costs $0.03.",
+    "Attention by product type within a category, so you can see which kind of thing is " +
+      "being talked about rather than which brand. NOTE: this rollup is not published yet " +
+      "and currently returns 404 NOT_PUBLISHED for every category; that is a gap in what " +
+      "we publish, not a finding, and nothing is billed. Costs $0.03.",
     {
       category: z.string().describe("Category root slug, e.g. 'beauty'"),
       window: windowSchema,

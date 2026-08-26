@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build && npm test",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "check:parity": "tsx scripts/check-parity.ts"
   },

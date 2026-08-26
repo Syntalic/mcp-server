@@ -142,10 +142,10 @@ for it.
 |------|-------------|
 | `creator_index` | Creators ranked by mention volume in a category |
 | `brand_share` | Share of social conversation by brand |
-| `category_structure` | Which subcategories own a category's conversation |
+| `category_structure` | Which subcategories own a category's conversation **(rollup not published yet)** |
 | `brand_momentum` | Brands rising, falling or newly appearing |
-| `topic_trends` | Emerging conversation topics |
-| `product_type_trends` | Attention by product type rather than by brand |
+| `topic_trends` | Emerging conversation topics **(rollup not published yet)** |
+| `product_type_trends` | Attention by product type rather than by brand **(rollup not published yet)** |
 | `social_series` | Weekly mentions and views time series for one subject |
 
 ### Scout, cross-domain ($0.05/query)
@@ -229,3 +229,17 @@ Payments accepted:
 ## License
 
 MIT
+
+## Keeping the tool surface honest
+
+The MCP once drifted 14 paid routes behind the API without anyone noticing: all
+nine social/scout routes plus five marketing/analyst ones were live, priced and
+unreachable from any agent.
+
+- `npm test` runs offline and pins the inventory. It rejects duplicate tool
+  names, duplicate or malformed paths, and any paid tool whose description omits
+  its price (agents budget from that string, so a paid tool reading as free gets
+  called in a loop). It gates `npm publish`.
+- `npm run check:parity` hits the live `/openapi.json` and diffs both ways. It is
+  the only check that catches a route shipping in the API with no tool. **Run it
+  before publishing.**
