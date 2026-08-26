@@ -116,6 +116,9 @@ Understand the shape and coverage of the catalog before spending on a paid query
 | `promo_intelligence` | Promotional activity intelligence |
 | `share_of_shelf` | Brand share of shelf analysis |
 | `price_positioning` | Brand price positioning vs competitors |
+| `brand_breakdown` | A brand's assortment broken down by category |
+| `retailer_assortment` | Which retail chains carry a brand or category |
+| `availability_index` | Out-of-stock rates by retailer or category |
 
 ### Analyst ($0.02/query)
 
@@ -125,6 +128,34 @@ Understand the shape and coverage of the catalog before spending on a paid query
 | `price_dispersion` | Price variance across retailers |
 | `retailer_index` | Pricing index for a retailer |
 | `category_summary` | Comprehensive category pricing summary |
+| `category_concentration` | How concentrated a category is, few brands vs fragmented |
+| `price_change_leaders` | Biggest price movers over 7, 30 or 90 days |
+
+### Social ($0.03/query)
+
+TikTok and Instagram only. Every route is scoped to one category root: there is no
+wildcard, because these answers are ranked comparisons. A `404 NOT_PUBLISHED` means we
+do not publish that rollup yet, **not** that the category is quiet, and nothing is billed
+for it.
+
+| Tool | Description |
+|------|-------------|
+| `creator_index` | Creators ranked by mention volume in a category |
+| `brand_share` | Share of social conversation by brand |
+| `category_structure` | Which subcategories own a category's conversation |
+| `brand_momentum` | Brands rising, falling or newly appearing |
+| `topic_trends` | Emerging conversation topics |
+| `product_type_trends` | Attention by product type rather than by brand |
+| `social_series` | Weekly mentions and views time series for one subject |
+
+### Scout, cross-domain ($0.05/query)
+
+The only routes that bind both corpora to one category axis and one brand key.
+
+| Tool | Description |
+|------|-------------|
+| `attention_vs_shelf` | Brands ranked by share-of-conversation vs share-of-shelf gap |
+| `launch_buzz` | New shelf arrivals against the conversation around their brand |
 
 ### Utility
 
