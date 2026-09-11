@@ -590,16 +590,14 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
-      subcategory: z.string().optional().describe("Narrow to one subcategory"),
       limit: socialLimitSchema,
     },
-    async ({ category, window, platform, organic_only, subcategory, limit }) =>
+    async ({ category, window, platform, organic_only, limit }) =>
       query("/v1/social/creator-index", {
         category,
         window,
         platform,
         organic_only: organic_only ? "true" : undefined,
-        subcategory,
         limit: limit?.toString(),
       }),
   );
@@ -607,23 +605,23 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "brand_share",
     "Share of social conversation by brand within a category. This is share of " +
-      "ATTENTION, not share of shelf or of sales. Costs $0.03.",
+      "ATTENTION, not share of shelf or of sales. `rank` is emitted only on unfiltered " +
+      "requests; `tied_with` is pairwise proximity rather than an equivalence class. " +
+      "Costs $0.03.",
     {
       category: z.string().describe("Category root slug, e.g. 'beauty'"),
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
-      subcategory: z.string().optional().describe("Switches the axis to this subcategory"),
       brand: z.string().optional().describe("Brand name to focus on"),
       limit: socialLimitSchema,
     },
-    async ({ category, window, platform, organic_only, subcategory, brand, limit }) =>
+    async ({ category, window, platform, organic_only, brand, limit }) =>
       query("/v1/social/brand-share", {
         category,
         window,
         platform,
         organic_only: organic_only ? "true" : undefined,
-        subcategory,
         brand,
         limit: limit?.toString(),
       }),
@@ -661,20 +659,18 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
-      subcategory: z.string().optional().describe("Narrow to one subcategory"),
       status: z
         .enum(["new", "rising", "falling", "all"])
         .optional()
         .describe("Restrict to one movement class. 'new' = emerging-brand detection. Defaults to all."),
       limit: socialLimitSchema,
     },
-    async ({ category, window, platform, organic_only, subcategory, status, limit }) =>
+    async ({ category, window, platform, organic_only, status, limit }) =>
       query("/v1/social/brand-momentum", {
         category,
         window,
         platform,
         organic_only: organic_only ? "true" : undefined,
-        subcategory,
         status,
         limit: limit?.toString(),
       }),
@@ -713,35 +709,33 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
-      subcategory: z.string().optional().describe("Narrow to one subcategory"),
       limit: socialLimitSchema,
     },
-    async ({ category, window, platform, organic_only, subcategory, limit }) =>
+    async ({ category, window, platform, organic_only, limit }) =>
       query("/v1/social/product-type-trends", {
         category,
         window,
         platform,
         organic_only: organic_only ? "true" : undefined,
-        subcategory,
         limit: limit?.toString(),
       }),
   );
 
   server.tool(
     "social_series",
-    "Weekly mentions and views time series for one subject: a brand, a category, or a " +
-      "subcategory. Use it to chart a trend rather than rank a moment. `subject` is " +
+    "Weekly mentions and views time series for one subject: a brand or a " +
+      "category. Use it to chart a trend rather than rank a moment. `subject` is " +
       "required unless subject_kind is 'category'. Costs $0.03.",
     {
       category: z.string().describe("Category root slug the subject is scoped to"),
       subject_kind: z
-        .enum(["brand", "category", "subcategory"])
+        .enum(["brand", "category"])
         .optional()
         .describe("What kind of subject to chart. Defaults to brand."),
       subject: z
         .string()
         .optional()
-        .describe("The subject key (brand key or subcategory slug). Required unless subject_kind='category'."),
+        .describe("The subject key (brand key). Required unless subject_kind='category'."),
       platform: platformSchema,
       organic_only: organicOnlySchema,
       weeks: z
