@@ -9,7 +9,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey } from "viem/accounts";
 import { base58 } from "@scure/base";
 import { createServer } from "./server.js";
-import { PLAYBOOKS, RULES } from "./playbooks.generated.js";
+import { METRICS, PLAYBOOKS, RULES } from "./playbooks.generated.js";
 
 const API_BASE = "https://api.test";
 const ONTOLOGY_KEY = "free-key-0123456789";
@@ -233,6 +233,7 @@ describe("the playbooks and the rules", () => {
     const instructions = client.getInstructions() ?? "";
     assert.match(instructions, /ontology_resolve/);
     assert.match(instructions, /syntalic:\/\/ontology\/rules/);
+    assert.match(instructions, /syntalic:\/\/ontology\/metrics/);
     assert.match(instructions, /never pick one silently/);
   });
 
@@ -254,11 +255,14 @@ describe("the playbooks and the rules", () => {
     const uris = resources.map((r) => r.uri).sort();
     assert.deepEqual(uris, [
       "syntalic://ontology/rules",
+      "syntalic://ontology/metrics",
       "syntalic://playbooks",
       ...PLAYBOOKS.map((p) => `syntalic://playbooks/${p.name}`),
     ].sort());
     const rules = await client.readResource({ uri: "syntalic://ontology/rules" });
     assert.equal((rules.contents[0] as { text: string }).text, RULES.text);
+    const metrics = await client.readResource({ uri: "syntalic://ontology/metrics" });
+    assert.equal((metrics.contents[0] as { text: string }).text, METRICS.text);
     const index = await client.readResource({ uri: "syntalic://playbooks" });
     for (const p of PLAYBOOKS) assert.match((index.contents[0] as { text: string }).text, new RegExp(p.name));
   });
@@ -276,6 +280,19 @@ describe("the playbooks and the rules", () => {
         assert.ok(names.has(word), `${p.name} names \`${word}\`, which is not a tool of this server`);
       }
     }
+  });
+
+  it("the metric definitions name a tool of this server for every figure, and only theirs", async () => {
+    const client = await connect(ONTOLOGY_KEY);
+    const names = new Set((await client.listTools()).tools.map((t) => t.name));
+    const headings = [...METRICS.text.matchAll(/^## (\S+)/gm)].map((m) => m[1]!);
+    const toolLines = [...METRICS.text.matchAll(/^Tool `([a-z_]+)`, field `([^`]+)`/gm)];
+    assert.ok(headings.length >= 20, `only ${headings.length} entries`);
+    // every metric entry (all but the two envelope entries at the end) names the tool that returns it
+    assert.equal(toolLines.length, headings.length - 2);
+    for (const m of toolLines) assert.ok(names.has(m[1]!), `${m[2]} is said to come from \`${m[1]}\`, which is not a tool of this server`);
+    assert.doesNotMatch(METRICS.text, /\{\{|<!--/);
+    assert.ok(!METRICS.text.includes("`price_inflation`"), "Eve's name for inflation_tracker");
   });
 
   it("never name a tool the MCP server lacks (Eve-only tools stay in Eve's blocks)", async () => {

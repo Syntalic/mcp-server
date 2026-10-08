@@ -203,15 +203,18 @@ A malformed or unknown id is refused before any payment is requested. Names stil
 ## Prompts and resources
 
 The playbooks for questions that take more than one call are **prompts** (each takes an optional
-`question`) and **resources**, and the six rules for using the ontology tools are one resource:
+`question`) and **resources**, and the six rules for using the ontology tools, and what each figure the
+pricing and shelf tools return means, are one resource each:
 
 | | |
 |---|---|
 | prompts | `position-on-shelf`, `diagnose-price-move`, `promo-pressure`, `retail-coverage`, `category-brief`, `buyer-pitch` |
-| resources | `syntalic://ontology/rules`, `syntalic://playbooks` (the index), `syntalic://playbooks/<name>` |
+| resources | `syntalic://ontology/rules`, `syntalic://ontology/metrics` (each figure's definition, the tool and field that return it, and when it is withheld), `syntalic://playbooks` (the index), `syntalic://playbooks/<name>` |
 
-They are rendered from the same sources the Syntalic dashboard agent reads, so the two give the same
-advice. `src/playbooks.generated.ts` is generated; edit it only by re-vendoring (see below).
+The playbooks are rendered from the same sources the Syntalic dashboard agent reads, so the two give the
+same advice; the metric definitions are rendered from the Syntalic repository's metric registry
+(`shared/pricing-canon/data/metrics.json`). `src/playbooks.generated.ts` is generated; edit it only by
+re-vendoring (see below).
 
 ## Annotations
 

@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { PLAYBOOKS, RULES, type Playbook } from "./playbooks.generated.js";
+import { METRICS, PLAYBOOKS, RULES, type Playbook } from "./playbooks.generated.js";
 
 /**
  * What a client is told at connection: sent as the server's `instructions`, which most clients
@@ -16,7 +16,8 @@ export const SERVER_INSTRUCTIONS =
   "ids it returns (spt, gpc, brand_id) instead of guessed names. A name that fits several things " +
   "returns all of them as co-equals: never pick one silently. Say 'not seen at X' only when X is in " +
   "retailers_scanned. The ontology tools need a free API key in SYNTALIC_API_KEY. " +
-  "Read the resource syntalic://ontology/rules for the six rules, and use the playbook prompts " +
+  "Read the resource syntalic://ontology/rules for the six rules and syntalic://ontology/metrics for " +
+  "what each figure means and when it is withheld, and use the playbook prompts " +
   "(position-on-shelf, diagnose-price-move, promo-pressure, retail-coverage, category-brief, " +
   "buyer-pitch) for questions that take more than one call.";
 
@@ -34,7 +35,8 @@ function indexText(): string {
 }
 
 /**
- * The playbooks as prompts and resources, and the six ontology rules as one resource. The text
+ * The playbooks as prompts and resources, and the six ontology rules and the metric definitions as one
+ * resource each. The text
  * is rendered from shared/playbooks in the Syntalic repository (src/playbooks.generated.ts), the
  * same sources Eve's skills are rendered from, so the two surfaces give the same advice.
  */
@@ -64,6 +66,17 @@ export function registerGuidance(server: McpServer): void {
       mimeType: MARKDOWN,
     },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: MARKDOWN, text: RULES.text }] }),
+  );
+
+  server.registerResource(
+    "metric-definitions",
+    "syntalic://ontology/metrics",
+    {
+      title: "What the figures mean",
+      description: METRICS.description,
+      mimeType: MARKDOWN,
+    },
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: MARKDOWN, text: METRICS.text }] }),
   );
 
   server.registerResource(
