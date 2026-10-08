@@ -1,7 +1,9 @@
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { createPaidFetch, PaymentError } from "./lib/fetch.js";
+import { registerGuidance, SERVER_INSTRUCTIONS } from "./guidance.js";
 import {
   countrySchema,
   retailerSchema,
@@ -10,11 +12,47 @@ import {
   platformSchema,
   organicOnlySchema,
   socialLimitSchema,
+  sptSchema,
+  gpcSchema,
+  brandIdSchema,
+  entityUidSchema,
 } from "./lib/schemas.js";
 
 // Read the real version rather than a second hand-maintained copy: this said
 // 0.6.0 while the package was on 0.9.0, so every client saw the wrong version.
 const VERSION: string = createRequire(import.meta.url)("../package.json").version;
+
+/** Tools that cost nothing and change nothing. Every other tool spends USDC from the user's wallet. */
+const FREE_TOOLS: ReadonlySet<string> = new Set([
+  "wallet_info",
+  "catalog_overview",
+  "browse_categories",
+  "list_retailers",
+  "list_brands",
+  "coverage_map",
+  "ontology_resolve",
+  "ontology_neighbors",
+  "ontology_coverage",
+]);
+
+/** MCP tool annotations (advisory: clients may use them to decide what to confirm). A paid tool is
+ *  NOT read-only: running it moves the user's money, and running it twice spends twice, which is
+ *  what a client that auto-approves read-only tools must not do for it. Approval and the wallet's
+ *  own balance remain the enforcement. */
+function annotationsFor(name: string): ToolAnnotations {
+  return FREE_TOOLS.has(name)
+    ? { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    : { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+}
+
+/** A category given by NAME. Optional because the same tools take `spt` or `gpc` instead
+ *  (ids from ontology_resolve); the API refuses a call that names none, free of charge. */
+const categoryNameSchema = (what: string) =>
+  z.string().optional().describe(`${what}. Send this OR spt OR gpc (ids from ontology_resolve), not more than one.`);
+
+/** A brand given by NAME; `brand_id` is the alternative. */
+const brandNameSchema = (what: string) =>
+  z.string().optional().describe(`${what}. Send this OR brand_id (from ontology_resolve), not both.`);
 
 export interface ServerConfig {
   apiBase: string;
@@ -26,10 +64,13 @@ export interface ServerConfig {
 }
 
 export async function createServer(config: ServerConfig): Promise<McpServer> {
-  const server = new McpServer({
-    name: "syntalic-pricing-intelligence",
-    version: VERSION,
-  });
+  const server = new McpServer(
+    {
+      name: "syntalic-pricing-intelligence",
+      version: VERSION,
+    },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
   // createPaidFetch validates both keys (throws a helpful error on malformed input)
   // and returns the derived addresses, so we don't redo the parsing here.
@@ -44,6 +85,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "wallet_info",
     "Show your wallet addresses and funding instructions for all supported chains. Call this if a payment fails or to check your wallet. Keys are never exposed via MCP tools — to see addresses + config without revealing keys, the user can run `npx @syntalic/mcp-server --info` in their terminal. To export private keys for backup/import, they run `--export-keys` instead.",
     {},
+    annotationsFor("wallet_info"),
     async () => {
       const lines: string[] = [
         "Wallets (client auto-picks the chain with balance per query):",
@@ -188,6 +230,78 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
   }
 
+  // The free ontology routes (/v1/ontology/*) are keyed, not paid: an API key in
+  // X-API-Key, no wallet and no x402 handshake. The key is SYNTALIC_API_KEY, the
+  // variable that already carries a staff key on the paid routes; a staff key is
+  // admitted here too. A batch is REPEATED parameters (term=a&term=b): the routes refuse
+  // the comma-joined spelling, because a comma can sit inside a real name.
+  //
+  // Compact JSON on purpose: an ontology answer is the largest thing an agent reads
+  // (every match carries its coverage), and indentation is tokens spent on nothing.
+  async function queryOntology(path: string, params: Record<string, string | string[] | undefined>) {
+    if (!config.apiKey) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text:
+              "The ontology tools need a free Syntalic API key. Set SYNTALIC_API_KEY in this MCP server's " +
+              "environment and restart it. (A wallet is not needed for these tools, and the key is not a " +
+              "wallet key.) Until then, the paid tools still work with names; ids from the ontology need the key.",
+          },
+        ],
+        isError: true,
+      };
+    }
+    const url = new URL(path, config.apiBase);
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined) continue;
+      for (const item of Array.isArray(v) ? v : [v]) url.searchParams.append(k, item);
+    }
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        headers: { "X-API-Key": config.apiKey, accept: "application/json" },
+        signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Network error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      let detail = text;
+      try {
+        const body = JSON.parse(text) as { error?: { code?: string; message?: string } };
+        if (body.error?.message) detail = `${body.error.code ?? res.status}: ${body.error.message}`;
+      } catch {
+        // not JSON: show what came back
+      }
+      const hint =
+        res.status === 401 || res.status === 403
+          ? " The ontology routes are keyed: check that SYNTALIC_API_KEY is a valid Syntalic API key."
+          : res.status === 503
+            ? " The ontology may not be published yet. Paid tools still work with names."
+            : "";
+      return {
+        content: [{ type: "text" as const, text: `Error ${res.status}: ${detail}${hint}` }],
+        isError: true,
+      };
+    }
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return {
+        content: [{ type: "text" as const, text: "Error: API returned a non-JSON response" }],
+        isError: true,
+      };
+    }
+    return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+  }
+
   // ── Public discovery (FREE — no payment) ────────────────────────
   // Understand the shape/coverage of the catalog before spending on a paid query.
 
@@ -195,6 +309,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "catalog_overview",
     "See the shape of the catalog: total unique products, listings, brands, categories, retailers, price observations, and the last-updated timestamp. FREE — no payment. Call this first to understand what data exists before spending on a paid query.",
     {},
+    annotationsFor("catalog_overview"),
     async () => queryPublic("/v1/public/stats", {}),
   );
 
@@ -210,6 +325,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       limit: z.number().int().min(1).max(500).optional().describe("Page size (default 200)"),
       offset: z.number().int().min(0).optional().describe("Pagination offset"),
     },
+    annotationsFor("browse_categories"),
     async ({ parent_path, depth, limit, offset }) =>
       queryPublic("/v1/public/categories", {
         parent_path,
@@ -226,6 +342,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       limit: z.number().int().min(1).max(500).optional().describe("Page size (default 100)"),
       offset: z.number().int().min(0).optional().describe("Pagination offset"),
     },
+    annotationsFor("list_retailers"),
     async ({ limit, offset }) =>
       queryPublic("/v1/public/retailers", { limit: limit?.toString(), offset: offset?.toString() }),
   );
@@ -238,6 +355,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       limit: z.number().int().min(1).max(500).optional().describe("Page size (default 100)"),
       offset: z.number().int().min(0).optional().describe("Pagination offset"),
     },
+    annotationsFor("list_brands"),
     async ({ q, limit, offset }) =>
       queryPublic("/v1/public/brands", { q, limit: limit?.toString(), offset: offset?.toString() }),
   );
@@ -256,6 +374,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       limit: z.number().int().min(1).max(1000).optional().describe("Page size (default 200)"),
       offset: z.number().int().min(0).optional().describe("Pagination offset"),
     },
+    annotationsFor("coverage_map"),
     async ({ country, platform, category_root, quality_status, limit, offset }) =>
       queryPublic("/v1/public/coverage", {
         country,
@@ -267,34 +386,159 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       }),
   );
 
+  // ── Ontology (FREE — keyed, no payment) ─────────────────────────
+  // What a name means, what sits next to it, and how much evidence stands behind it.
+  // Three tools under one prefix; everything else stays available, and nothing here
+  // routes the agent: `suggested_next_calls` in each answer is advice with ids and prices.
+
+  server.tool(
+    "ontology_resolve",
+    "FREE — no payment (needs a free API key in SYNTALIC_API_KEY). Use when a question names a " +
+      "brand, category, product type, retailer or product: it turns each name into ids. One " +
+      "concept per term (\"protein bars\", \"gerber\"); \"woman-owned candy\" is two terms. EVERY thing a " +
+      "term can name comes back and none is ranked best: a name that fits two shelves or two " +
+      "brands returns both as co-equals (`co_equal`), so never pick one silently: run each, or " +
+      "ask. Each match carries an `id`, the `key` of a category, and coverage counts. A term " +
+      "that names nothing returns a `miss` with the reason and close candidates, never a guess. " +
+      "Each result ends with `suggested_next_calls`: calls that make sense next, with the ids " +
+      "filled in and the price beside each. Pass an id to the paid tools as `spt`, `gpc` or " +
+      "`brand_id` instead of a name.",
+    {
+      terms: z
+        .array(z.string().min(1).max(200))
+        .min(1)
+        .max(25)
+        .describe("One concept per term, answered in the same order. Up to 25."),
+      kinds: z
+        .array(z.enum(["category", "product_type", "brand", "retailer", "entity"]))
+        .optional()
+        .describe(
+          "Which kinds a term may resolve to. Omit for category, product_type, brand and retailer. Add 'entity' to find one specific product (a brand plus its words).",
+        ),
+      within: z
+        .string()
+        .optional()
+        .describe(
+          "An spt: or gpc: id for the shelf the question is on, when you already know it. Hits outside it move to `also_ok`.",
+        ),
+      country: countrySchema,
+    },
+    annotationsFor("ontology_resolve"),
+    async ({ terms, kinds, within, country }) =>
+      queryOntology("/v1/ontology/resolve", { term: terms, kinds: kinds?.join(","), within, country }),
+  );
+
+  server.tool(
+    "ontology_neighbors",
+    "FREE — no payment (needs a free API key in SYNTALIC_API_KEY). Use for what sits next to ONE " +
+      "id from ontology_resolve. A category (spt:): ancestors, children, siblings, the product " +
+      "types filed under it, its top brands and chains. A product type (gpc:): its ancestry and " +
+      "every shelf it is filed under. A brand (brand:): the shelves it sells on (`footprint`), " +
+      "the chains that carry it (`carried_at`) and the chains we scanned where it lives that do " +
+      "NOT (`not_observed_at`). A chain (retailer:): what it sells and which brands it carries. " +
+      "Pick blocks with `relations`; every list says its `total`.",
+    {
+      id: z
+        .string()
+        .min(1)
+        .describe("One id exactly as ontology_resolve returned it: spt:…, gpc:…, brand:… or retailer:…"),
+      relations: z
+        .array(z.string().min(1))
+        .optional()
+        .describe(
+          "Blocks to return. category: ancestors, children, siblings, types, parallel_homes, aliases, top_brands, top_retailers. product type: ancestry, homes, siblings, aliases. brand: profile, aliases, footprint, carried_at, not_observed_at. chain: profile, assortment, brands. Omit for the kind's defaults.",
+        ),
+      limit: z.number().int().min(1).max(200).optional().describe("Most items per list (default 25)."),
+      country: countrySchema,
+    },
+    annotationsFor("ontology_neighbors"),
+    async ({ id, relations, limit, country }) =>
+      queryOntology("/v1/ontology/neighbors", {
+        id,
+        relations: relations?.join(","),
+        limit: limit?.toString(),
+        country,
+      }),
+  );
+
+  server.tool(
+    "ontology_coverage",
+    "FREE — no payment (needs a free API key in SYNTALIC_API_KEY). Use before you hedge, choose a " +
+      "grain (shelf or parent) or spend: how much evidence stands behind ids, and what was looked " +
+      "at. Listings, freshness, `channels_present` and `channels_not_observed` (a channel with no " +
+      "evidence at all), and `retailers_scanned`. These are the denominators of an absence claim: " +
+      "say 'not seen at X' ONLY when X is in `retailers_scanned` for that shelf; a chain outside " +
+      "it is unknown, not absent. With `retailer` and a brand id it answers one question: seen " +
+      "there, scanned and not seen (`absence: not_observed`), or not scanned (`absence: " +
+      "unscanned`: nothing can be said). An id that names nothing comes back `found: false`.",
+    {
+      ids: z
+        .array(z.string().min(1))
+        .min(1)
+        .max(25)
+        .describe("Ids exactly as ontology_resolve returned them, answered in the same order."),
+      retailer: z
+        .string()
+        .optional()
+        .describe("A retailer: id (e.g. 'retailer:costco'). Needs at least one brand id in `ids`."),
+      country: countrySchema,
+    },
+    annotationsFor("ontology_coverage"),
+    async ({ ids, retailer, country }) =>
+      queryOntology("/v1/ontology/coverage", { id: ids, retailer, country }),
+  );
+
   // ── Shopper ($0.01/query) ───────────────────────────────────────
 
   server.tool(
     "best_price",
-    "Find the best current price for a product across retailers. Costs $0.01.",
-    { q: z.string().describe("Product search query"), country: countrySchema, retailer: retailerSchema },
-    async ({ q, country, retailer }) => query("/v1/shopper/best-price", { q, country, retailer }),
+    "Find the best current price for a product across retailers. Pass `q` (a name), or `entity_uid` for one exact product from ontology_resolve. Costs $0.01.",
+    {
+      q: z.string().optional().describe("Product search query. Send this OR entity_uid."),
+      entity_uid: entityUidSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+    },
+    annotationsFor("best_price"),
+    async ({ q, entity_uid, country, retailer }) =>
+      query("/v1/shopper/best-price", { q, entity_uid, country, retailer }),
   );
 
   server.tool(
     "price_history",
-    "Get price history for a product over time. Costs $0.01.",
-    { q: z.string().describe("Product search query"), country: countrySchema, retailer: retailerSchema, days: daysSchema },
-    async ({ q, country, retailer, days }) =>
-      query("/v1/shopper/price-history", { q, country, retailer, days: days?.toString() }),
+    "Get price history for a product over time. Pass `q` (a name), or `entity_uid` for one exact product from ontology_resolve. Costs $0.01.",
+    {
+      q: z.string().optional().describe("Product search query. Send this OR entity_uid."),
+      entity_uid: entityUidSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+      days: daysSchema,
+    },
+    annotationsFor("price_history"),
+    async ({ q, entity_uid, country, retailer, days }) =>
+      query("/v1/shopper/price-history", { q, entity_uid, country, retailer, days: days?.toString() }),
   );
 
   server.tool(
     "deal_finder",
     "Find current deals and discounts in a product category. Costs $0.01.",
-    { category: z.string().describe("Product category (e.g. electronics, grocery)"), country: countrySchema, retailer: retailerSchema },
-    async ({ category, country, retailer }) => query("/v1/shopper/deal-finder", { category, country, retailer }),
+    {
+      category: categoryNameSchema("Product category (e.g. electronics, grocery)"),
+      spt: sptSchema,
+      gpc: gpcSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+    },
+    annotationsFor("deal_finder"),
+    async ({ category, spt, gpc, country, retailer }) =>
+      query("/v1/shopper/deal-finder", { category, spt, gpc, country, retailer }),
   );
 
   server.tool(
     "price_drop_alert",
     "Check for recent price drops on a product. Costs $0.01.",
     { q: z.string().describe("Product search query"), country: countrySchema, retailer: retailerSchema, days: daysSchema },
+    annotationsFor("price_drop_alert"),
     async ({ q, country, retailer, days }) =>
       query("/v1/shopper/price-drop-alert", { q, country, retailer, days: days?.toString() }),
   );
@@ -304,32 +548,49 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "competitive_landscape",
     "Get competitive pricing landscape for a category. Costs $0.01.",
-    { category: z.string().describe("Product category"), country: countrySchema, retailer: retailerSchema },
-    async ({ category, country, retailer }) =>
-      query("/v1/marketing/competitive-landscape", { category, country, retailer }),
+    {
+      category: categoryNameSchema("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+    },
+    annotationsFor("competitive_landscape"),
+    async ({ category, spt, gpc, country, retailer }) =>
+      query("/v1/marketing/competitive-landscape", { category, spt, gpc, country, retailer }),
   );
 
   server.tool(
     "brand_tracker",
     "Track a brand's pricing and market positioning. Costs $0.01.",
-    { brand: z.string().describe("Brand name (e.g. Sony, Samsung)"), country: countrySchema, retailer: retailerSchema, days: daysSchema },
-    async ({ brand, country, retailer, days }) =>
-      query("/v1/marketing/brand-tracker", { brand, country, retailer, days: days?.toString() }),
+    {
+      brand: brandNameSchema("Brand name (e.g. Sony, Samsung)"),
+      brand_id: brandIdSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+      days: daysSchema,
+    },
+    annotationsFor("brand_tracker"),
+    async ({ brand, brand_id, country, retailer, days }) =>
+      query("/v1/marketing/brand-tracker", { brand, brand_id, country, retailer, days: days?.toString() }),
   );
 
   server.tool(
     "promo_intelligence",
     "Analyze promotional activity within a category — promo frequency, average and max discount depth — over a date range. Pivot the breakdown with `aggregate_by`: default `brand` ranks brands within the category; `retailer` ranks retailers (pair with `brand=<name>` to answer 'which retailers run the deepest promos on Brand X in Category Y'). Response key mirrors the dimension: `brands: [...]` or `retailers: [...]`. Costs $0.01.",
     {
-      category: z.string().describe("Product category"),
+      category: categoryNameSchema("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
       country: countrySchema,
       retailer: retailerSchema,
       brand: z
         .string()
         .optional()
         .describe(
-          "Optional brand filter — limit aggregation to products of this brand (case-insensitive). REQUIRED when aggregate_by=retailer to get per-retailer promo depth for a specific brand.",
+          "Optional brand filter — limit aggregation to products of this brand (case-insensitive). REQUIRED when aggregate_by=retailer to get per-retailer promo depth for a specific brand. Or send brand_id instead.",
         ),
+      brand_id: brandIdSchema,
       aggregate_by: z
         .enum(["brand", "retailer"])
         .optional()
@@ -338,12 +599,16 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         ),
       days: daysSchema,
     },
-    async ({ category, country, retailer, brand, aggregate_by, days }) =>
+    annotationsFor("promo_intelligence"),
+    async ({ category, spt, gpc, country, retailer, brand, brand_id, aggregate_by, days }) =>
       query("/v1/marketing/promo-intelligence", {
         category,
+        spt,
+        gpc,
         country,
         retailer,
         brand,
+        brand_id,
         aggregate_by,
         days: days?.toString(),
       }),
@@ -352,17 +617,33 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "share_of_shelf",
     "Analyze brand share of shelf in a category. Costs $0.01.",
-    { category: z.string().describe("Product category"), country: countrySchema, retailer: retailerSchema },
-    async ({ category, country, retailer }) =>
-      query("/v1/marketing/share-of-shelf", { category, country, retailer }),
+    {
+      category: categoryNameSchema("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+    },
+    annotationsFor("share_of_shelf"),
+    async ({ category, spt, gpc, country, retailer }) =>
+      query("/v1/marketing/share-of-shelf", { category, spt, gpc, country, retailer }),
   );
 
   server.tool(
     "price_positioning",
-    "Analyze a brand's price positioning vs competitors. Costs $0.01.",
-    { brand: z.string().describe("Brand name"), country: countrySchema, retailer: retailerSchema },
-    async ({ brand, country, retailer }) =>
-      query("/v1/marketing/price-positioning", { brand, country, retailer }),
+    "Analyze a brand's price positioning vs competitors. Pass the shelf (category, spt or gpc): without one the brand is compared with the whole catalogue and no price tier is returned. Costs $0.01.",
+    {
+      brand: brandNameSchema("Brand name"),
+      brand_id: brandIdSchema,
+      category: categoryNameSchema("Product category to compare the brand against"),
+      spt: sptSchema,
+      gpc: gpcSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+    },
+    annotationsFor("price_positioning"),
+    async ({ brand, brand_id, category, spt, gpc, country, retailer }) =>
+      query("/v1/marketing/price-positioning", { brand, brand_id, category, spt, gpc, country, retailer }),
   );
 
   // ── Analyst ($0.02/query) ───────────────────────────────────────
@@ -370,9 +651,16 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "inflation_tracker",
     "Track price inflation trends in a category. Costs $0.02.",
-    { category: z.string().describe("Product category"), country: countrySchema, days: daysSchema },
-    async ({ category, country, days }) =>
-      query("/v1/analyst/inflation", { category, country, days: days?.toString() }),
+    {
+      category: categoryNameSchema("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
+      country: countrySchema,
+      days: daysSchema,
+    },
+    annotationsFor("inflation_tracker"),
+    async ({ category, spt, gpc, country, days }) =>
+      query("/v1/analyst/inflation", { category, spt, gpc, country, days: days?.toString() }),
   );
 
   // Hidden until the backend endpoint is implemented. Re-enable by uncommenting.
@@ -387,15 +675,23 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "price_dispersion",
     "Analyze price variance across retailers for a category. Costs $0.02.",
-    { category: z.string().describe("Product category"), country: countrySchema, retailer: retailerSchema },
-    async ({ category, country, retailer }) =>
-      query("/v1/analyst/price-dispersion", { category, country, retailer }),
+    {
+      category: categoryNameSchema("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+    },
+    annotationsFor("price_dispersion"),
+    async ({ category, spt, gpc, country, retailer }) =>
+      query("/v1/analyst/price-dispersion", { category, spt, gpc, country, retailer }),
   );
 
   server.tool(
     "retailer_index",
     "Get a pricing index for a specific retailer. Costs $0.02.",
     { retailer: z.string().describe("Retailer name (e.g. amazon, walmart)"), country: countrySchema, days: daysSchema },
+    annotationsFor("retailer_index"),
     async ({ retailer, country, days }) =>
       query("/v1/analyst/retailer-index", { retailer, country, days: days?.toString() }),
   );
@@ -410,19 +706,30 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     {
       node: z
         .string()
+        .optional()
         .describe(
-          "Category path — 'electronics', 'electronics/headphones', or a deeper rung",
+          "Category path — 'electronics', 'electronics/headphones', or a deeper rung. Or send spt instead.",
         ),
+      spt: sptSchema,
     },
-    async ({ node }) => query("/v1/analyst/price-bands", { node }),
+    annotationsFor("price_bands"),
+    async ({ node, spt }) => query("/v1/analyst/price-bands", { node, spt }),
   );
 
   server.tool(
     "category_summary",
     "Get a comprehensive pricing summary for a category. Costs $0.02.",
-    { category: z.string().describe("Product category"), country: countrySchema, retailer: retailerSchema, days: daysSchema },
-    async ({ category, country, retailer, days }) =>
-      query("/v1/analyst/category-summary", { category, country, retailer, days: days?.toString() }),
+    {
+      category: categoryNameSchema("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
+      country: countrySchema,
+      retailer: retailerSchema,
+      days: daysSchema,
+    },
+    annotationsFor("category_summary"),
+    async ({ category, spt, gpc, country, retailer, days }) =>
+      query("/v1/analyst/category-summary", { category, spt, gpc, country, retailer, days: days?.toString() }),
   );
 
   // ── Reference / taxonomy ($0.01 per REQUEST, up to 100 ids) ──────
@@ -459,6 +766,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         .optional()
         .describe("Comma-separated Amazon browse node ids, e.g. '300334,12899121'"),
     },
+    annotationsFor("classify_product_type"),
     async ({ q, browse_id }) => query("/v1/reference/classify", { q, browse_id }),
   );
 
@@ -471,6 +779,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "and that is the retailer's shelving, not a coverage gap: a code reached by 2 " +
       "nodes is not thinner data than one reached by 20. Costs $0.01 per request.",
     { gpc_code: z.string().describe("Comma-separated 8-digit GPC codes, e.g. '10001159'") },
+    annotationsFor("gpc_reverse_lookup"),
     async ({ gpc_code }) => query("/v1/reference/reverse", { gpc_code }),
   );
 
@@ -484,6 +793,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "(739 bricks do) rather than the schema having been lost in transit. Costs $0.01 " +
       "per request.",
     { gpc_code: z.string().describe("Comma-separated 8-digit GPC codes, e.g. '10000002'") },
+    annotationsFor("gpc_brick_attributes"),
     async ({ gpc_code }) => query("/v1/reference/brick-attributes", { gpc_code }),
   );
 
@@ -498,8 +808,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "brand_breakdown",
     "Break a brand's assortment down by category, so you can see what a brand actually " +
       "sells rather than what it is known for. Costs $0.01.",
-    { brand: z.string().describe("Brand name"), country: countrySchema },
-    async ({ brand, country }) => query("/v1/marketing/brand-breakdown", { brand, country }),
+    { brand: brandNameSchema("Brand name"), brand_id: brandIdSchema, country: countrySchema },
+    annotationsFor("brand_breakdown"),
+    async ({ brand, brand_id, country }) => query("/v1/marketing/brand-breakdown", { brand, brand_id, country }),
   );
 
   server.tool(
@@ -509,11 +820,15 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "not a question. Costs $0.01.",
     {
       brand: z.string().optional().describe("Brand name"),
+      brand_id: brandIdSchema,
       category: z.string().optional().describe("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
       country: countrySchema,
     },
-    async ({ brand, category, country }) =>
-      query("/v1/marketing/retailer-assortment", { brand, category, country }),
+    annotationsFor("retailer_assortment"),
+    async ({ brand, brand_id, category, spt, gpc, country }) =>
+      query("/v1/marketing/retailer-assortment", { brand, brand_id, category, spt, gpc, country }),
   );
 
   server.tool(
@@ -523,24 +838,29 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "one of `category` or `brand`. Costs $0.01.",
     {
       category: z.string().optional().describe("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
       brand: z.string().optional().describe("Brand name"),
+      brand_id: brandIdSchema,
       country: countrySchema,
       aggregate_by: z
         .enum(["seller", "category_root"])
         .optional()
         .describe("Group results by retailer or by category root. Defaults to seller."),
     },
-    async ({ category, brand, country, aggregate_by }) =>
-      query("/v1/marketing/availability-index", { category, brand, country, aggregate_by }),
+    annotationsFor("availability_index"),
+    async ({ category, spt, gpc, brand, brand_id, country, aggregate_by }) =>
+      query("/v1/marketing/availability-index", { category, spt, gpc, brand, brand_id, country, aggregate_by }),
   );
 
   server.tool(
     "category_concentration",
     "Measure how concentrated a category is: whether a few brands own the shelf or it " +
       "is genuinely fragmented. Costs $0.02.",
-    { category: z.string().describe("Product category"), country: countrySchema },
-    async ({ category, country }) =>
-      query("/v1/analyst/category-concentration", { category, country }),
+    { category: categoryNameSchema("Product category"), spt: sptSchema, gpc: gpcSchema, country: countrySchema },
+    annotationsFor("category_concentration"),
+    async ({ category, spt, gpc, country }) =>
+      query("/v1/analyst/category-concentration", { category, spt, gpc, country }),
   );
 
   server.tool(
@@ -549,7 +869,10 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "window. You must pass at least one of `category` or `brand`. Costs $0.02.",
     {
       category: z.string().optional().describe("Product category"),
+      spt: sptSchema,
+      gpc: gpcSchema,
       brand: z.string().optional().describe("Brand name"),
+      brand_id: brandIdSchema,
       country: countrySchema,
       win: z
         .union([z.literal(7), z.literal(30), z.literal(90)])
@@ -557,10 +880,14 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         .describe("Lookback window in days: 7, 30 or 90. Defaults to 30."),
       limit: z.number().int().min(1).max(100).optional().describe("Max movers to return (default 15)"),
     },
-    async ({ category, brand, country, win, limit }) =>
+    annotationsFor("price_change_leaders"),
+    async ({ category, spt, gpc, brand, brand_id, country, win, limit }) =>
       query("/v1/analyst/price-change-leaders", {
         category,
+        spt,
+        gpc,
         brand,
+        brand_id,
         country,
         win: win?.toString(),
         limit: limit?.toString(),
@@ -592,6 +919,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       organic_only: organicOnlySchema,
       limit: socialLimitSchema,
     },
+    annotationsFor("creator_index"),
     async ({ category, window, platform, organic_only, limit }) =>
       query("/v1/social/creator-index", {
         category,
@@ -616,6 +944,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       brand: z.string().optional().describe("Brand name to focus on"),
       limit: socialLimitSchema,
     },
+    annotationsFor("brand_share"),
     async ({ category, window, platform, organic_only, brand, limit }) =>
       query("/v1/social/brand-share", {
         category,
@@ -640,6 +969,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       organic_only: organicOnlySchema,
       limit: socialLimitSchema,
     },
+    annotationsFor("category_structure"),
     async ({ category, window, platform, organic_only, limit }) =>
       query("/v1/social/category-structure", {
         category,
@@ -665,6 +995,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         .describe("Restrict to one movement class. 'new' = emerging-brand detection. Defaults to all."),
       limit: socialLimitSchema,
     },
+    annotationsFor("brand_momentum"),
     async ({ category, window, platform, organic_only, status, limit }) =>
       query("/v1/social/brand-momentum", {
         category,
@@ -688,6 +1019,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       organic_only: organicOnlySchema,
       limit: socialLimitSchema,
     },
+    annotationsFor("topic_trends"),
     async ({ category, window, platform, organic_only, limit }) =>
       query("/v1/social/topic-trends", {
         category,
@@ -711,6 +1043,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       organic_only: organicOnlySchema,
       limit: socialLimitSchema,
     },
+    annotationsFor("product_type_trends"),
     async ({ category, window, platform, organic_only, limit }) =>
       query("/v1/social/product-type-trends", {
         category,
@@ -746,6 +1079,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         .optional()
         .describe("How many trailing ISO weeks to return (default 26, max 104)"),
     },
+    annotationsFor("social_series"),
     async ({ category, subject_kind, subject, platform, organic_only, weeks }) =>
       query("/v1/social/series", {
         category,
@@ -776,6 +1110,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       organic_only: organicOnlySchema,
       limit: socialLimitSchema,
     },
+    annotationsFor("attention_vs_shelf"),
     async ({ category, country, window, platform, organic_only, limit }) =>
       query("/v1/social/attention-vs-shelf", {
         category,
@@ -799,6 +1134,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       organic_only: organicOnlySchema,
       limit: socialLimitSchema,
     },
+    annotationsFor("launch_buzz"),
     async ({ category, country, window, platform, organic_only, limit }) =>
       query("/v1/social/launch-buzz", {
         category,
@@ -809,6 +1145,10 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         limit: limit?.toString(),
       }),
   );
+
+  // Prompts (the playbooks) and resources (the rules, the playbook index): guidance an agent can
+  // pull, rendered from the same sources Eve reads (shared/playbooks in the Syntalic repo).
+  registerGuidance(server);
 
   return server;
 }
