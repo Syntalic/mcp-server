@@ -8,14 +8,14 @@ import { METRICS, PLAYBOOKS, RULES, type Playbook } from "./playbooks.generated.
  * prompts, so this only says where they are and the three things that cost the most when missed.
  */
 export const SERVER_INSTRUCTIONS =
-  "Syntalic prices, brands and shelves. Free: ontology_resolve (what a name means: ids, " +
-  "coverage, and suggested_next_calls), ontology_neighbors, ontology_coverage, and the catalog " +
-  "discovery tools. Every paid tool states its cost in its description. " +
+  "Syntalic prices, brands and shelves. Free: the catalog discovery tools. Every other tool states its " +
+  "cost in its description, the ontology tools (ontology_resolve: what a name means, as ids, coverage and " +
+  "suggested_next_calls; ontology_neighbors; ontology_coverage) at one cent each. " +
   "When a question names a brand, category, product type, retailer or product, call " +
   "ontology_resolve once per conversation (one concept per term) and scope the paid calls with the " +
   "ids it returns (spt, gpc, brand_id) instead of guessed names. A name that fits several things " +
   "returns all of them as co-equals: never pick one silently. Say 'not seen at X' only when X is in " +
-  "retailers_scanned. The ontology tools need a free API key in SYNTALIC_API_KEY. " +
+  "retailers_scanned. A malformed request is refused before anything is billed. " +
   "Read the resource syntalic://ontology/rules for the six rules and syntalic://ontology/metrics for " +
   "what each figure means and when it is withheld, and use the playbook prompts " +
   "(position-on-shelf, diagnose-price-move, promo-pressure, retail-coverage, category-brief, " +

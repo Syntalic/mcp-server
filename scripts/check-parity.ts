@@ -37,9 +37,9 @@ if (process.env.SYNTALIC_SPEC_FILE) {
 const paid = Object.keys(spec.paths).filter((p) => p.startsWith("/v1/") && !p.startsWith("/v1/public/"));
 
 const missing = paid.filter((p) => !called.has(p));
-// The ontology routes appear in the spec only once ONTOLOGY_API_KEYS is set on the API (they are keyed
-// and dark until then). While the spec has none, tools that call them are expected, not stale: they
-// answer with the API's 401 until the API opens. Said below, so a release does not go out unaware.
+// The ontology routes appear in the spec only once ONTOLOGY_ENABLED opens them on the API (priced, one
+// cent a call; dark until then). While the spec has none, tools that call them are expected, not stale:
+// they answer with the API's 401 until the API opens. Said below, so a release does not go out unaware.
 const ontologyOpen = Object.keys(spec.paths).some((p) => p.startsWith("/v1/ontology/"));
 const stale = [...called].filter(
   (p) => !p.startsWith("/v1/public/") && !(p in spec.paths) && (ontologyOpen || !p.startsWith("/v1/ontology/")),
@@ -88,7 +88,7 @@ if (stale.length) {
 }
 if (!ontologyOpen) {
   console.warn(
-    "\nnote: the API's spec lists no /v1/ontology/* route, so it is closed (ONTOLOGY_API_KEYS unset).\n" +
+    "\nnote: the API's spec lists no /v1/ontology/* route, so it is closed (ONTOLOGY_ENABLED unset).\n" +
       "      The three ontology tools will answer with its 401 until it opens, and the id parameters\n" +
       "      on the paid tools are not in the spec to check.",
   );
