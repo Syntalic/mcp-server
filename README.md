@@ -98,11 +98,13 @@ Understand the shape and coverage of the catalog before spending on a paid query
 | `list_brands` | Brands with product counts (optional `q` prefix filter) |
 | `coverage_map` | Where the catalog is deep vs thin — quality status per retailer × country × category |
 
-### Ontology (free: a key, no payment)
+### Ontology ($0.01/query)
 
-What a name means, what sits next to it, and how much evidence stands behind it. These routes are
-keyed, not paid: they need a free Syntalic API key in `SYNTALIC_API_KEY` and no wallet. Everything
-else stays available at once; nothing here routes the agent. Each answer ends with
+What a name means, what sits next to it, and how much evidence stands behind it. They cost one cent a
+call like the other lookups, with no key and no account: the wallet pays the same x402 or MPP
+challenge. A malformed request, an id that names nothing, or an ontology that is not published yet is
+refused before anything is billed. (The free catalog tools above are still the place to look around
+first.) Everything else stays available at once; nothing here routes the agent. Each answer ends with
 `suggested_next_calls`: calls that make sense next, with ids filled in and the price beside each.
 
 | Tool | Description |
@@ -231,7 +233,7 @@ All env vars are optional — a wallet is auto-generated on first run.
 |---------------------|-------------|
 | `SYNTALIC_EVM_PRIVATE_KEY` | Override the EVM key (Base + Tempo) from the wallet file |
 | `SYNTALIC_SOLANA_PRIVATE_KEY` | Override the Solana key from the wallet file |
-| `SYNTALIC_API_KEY` | A Syntalic API key. **Required for the three `ontology_*` tools** (a free key, no wallet needed); on the paid tools payment is still the primary auth, and a staff key skips it |
+| `SYNTALIC_API_KEY` | Optional. A staff bypass key, which skips payment on every paid tool. Payment is the normal way in, and nothing needs this; a free ontology key is not honoured, because the ontology is paid |
 | `SYNTALIC_API_BASE` | API base URL (default `https://api.syntalic.com`, HTTPS enforced) |
 | `SYNTALIC_SOLANA_RPC_URL` | Custom Solana RPC for balance checks (default `https://api.mainnet-beta.solana.com`, HTTPS enforced) |
 | `SYNTALIC_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
@@ -294,8 +296,8 @@ unreachable from any agent.
   the only check that catches a route shipping in the API with no tool. **Run it
   before publishing.** It also checks the id parameters: where the spec declares
   `spt`, `gpc`, `brand_id` or `entity_uid` on an operation, the tool must pass it
-  through. While the API's ontology is closed (`ONTOLOGY_API_KEYS` unset) the spec
-  lists no `/v1/ontology/*` route; the check says so and does not fail, but then it
+  through. While the API's ontology is closed (neither `ONTOLOGY_ENABLED` nor
+  `ONTOLOGY_API_KEYS` set) the spec lists no `/v1/ontology/*` route; the check says so and does not fail, but then it
   has no id parameters to compare, so run it again once the API opens. To check
   against a saved spec instead of the network: `SYNTALIC_SPEC_FILE=spec.json npm run check:parity`.
 - `src/server-ontology.test.ts` drives the server through a real client over an

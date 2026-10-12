@@ -30,9 +30,6 @@ const FREE_TOOLS: ReadonlySet<string> = new Set([
   "list_retailers",
   "list_brands",
   "coverage_map",
-  "ontology_resolve",
-  "ontology_neighbors",
-  "ontology_coverage",
 ]);
 
 /** MCP tool annotations (advisory: clients may use them to decide what to confirm). A paid tool is
@@ -125,10 +122,20 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     },
   );
 
-  async function query(path: string, params: Record<string, string | undefined>) {
+  // A parameter may repeat (term=a&term=b): the ontology routes take a batch that way, and
+  // refuse the comma-joined spelling because a comma can sit inside a real name.
+  // `compact` renders the answer without indentation: an ontology answer is the largest thing
+  // an agent reads (every match carries its coverage), and indentation is tokens spent on nothing.
+  async function query(
+    path: string,
+    params: Record<string, string | string[] | undefined>,
+    opts: { compact?: boolean } = {},
+  ) {
     const url = new URL(path, config.apiBase);
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined) url.searchParams.set(k, v);
+      if (v === undefined) continue;
+      if (Array.isArray(v)) for (const item of v) url.searchParams.append(k, item);
+      else url.searchParams.set(k, v);
     }
 
     const headers: Record<string, string> = {};
@@ -186,7 +193,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
     const data = await res.json();
     return {
-      content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify(data, null, opts.compact ? undefined : 2) }],
     };
   }
 
@@ -228,78 +235,6 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       };
     }
     return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
-  }
-
-  // The free ontology routes (/v1/ontology/*) are keyed, not paid: an API key in
-  // X-API-Key, no wallet and no x402 handshake. The key is SYNTALIC_API_KEY, the
-  // variable that already carries a staff key on the paid routes; a staff key is
-  // admitted here too. A batch is REPEATED parameters (term=a&term=b): the routes refuse
-  // the comma-joined spelling, because a comma can sit inside a real name.
-  //
-  // Compact JSON on purpose: an ontology answer is the largest thing an agent reads
-  // (every match carries its coverage), and indentation is tokens spent on nothing.
-  async function queryOntology(path: string, params: Record<string, string | string[] | undefined>) {
-    if (!config.apiKey) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text:
-              "The ontology tools need a free Syntalic API key. Set SYNTALIC_API_KEY in this MCP server's " +
-              "environment and restart it. (A wallet is not needed for these tools, and the key is not a " +
-              "wallet key.) Until then, the paid tools still work with names; ids from the ontology need the key.",
-          },
-        ],
-        isError: true,
-      };
-    }
-    const url = new URL(path, config.apiBase);
-    for (const [k, v] of Object.entries(params)) {
-      if (v === undefined) continue;
-      for (const item of Array.isArray(v) ? v : [v]) url.searchParams.append(k, item);
-    }
-    let res: Response;
-    try {
-      res = await fetch(url.toString(), {
-        headers: { "X-API-Key": config.apiKey, accept: "application/json" },
-        signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS),
-      });
-    } catch (err) {
-      return {
-        content: [{ type: "text" as const, text: `Network error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
-    if (!res.ok) {
-      const text = await res.text();
-      let detail = text;
-      try {
-        const body = JSON.parse(text) as { error?: { code?: string; message?: string } };
-        if (body.error?.message) detail = `${body.error.code ?? res.status}: ${body.error.message}`;
-      } catch {
-        // not JSON: show what came back
-      }
-      const hint =
-        res.status === 401 || res.status === 403
-          ? " The ontology routes are keyed: check that SYNTALIC_API_KEY is a valid Syntalic API key."
-          : res.status === 503
-            ? " The ontology may not be published yet. Paid tools still work with names."
-            : "";
-      return {
-        content: [{ type: "text" as const, text: `Error ${res.status}: ${detail}${hint}` }],
-        isError: true,
-      };
-    }
-    let data: unknown;
-    try {
-      data = await res.json();
-    } catch {
-      return {
-        content: [{ type: "text" as const, text: "Error: API returned a non-JSON response" }],
-        isError: true,
-      };
-    }
-    return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
   }
 
   // ── Public discovery (FREE — no payment) ────────────────────────
@@ -386,14 +321,14 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       }),
   );
 
-  // ── Ontology (FREE — keyed, no payment) ─────────────────────────
+  // ── Ontology ($0.01/query) ──────────────────────────────────────
   // What a name means, what sits next to it, and how much evidence stands behind it.
   // Three tools under one prefix; everything else stays available, and nothing here
   // routes the agent: `suggested_next_calls` in each answer is advice with ids and prices.
 
   server.tool(
     "ontology_resolve",
-    "FREE — no payment (needs a free API key in SYNTALIC_API_KEY). Use when a question names a " +
+    "Costs $0.01 per request (a malformed request is refused before anything is billed; no key needed). Use when a question names a " +
       "brand, category, product type, retailer or product: it turns each name into ids. One " +
       "concept per term (\"protein bars\", \"gerber\"); \"woman-owned candy\" is two terms. EVERY thing a " +
       "term can name comes back and none is ranked best: a name that fits two shelves or two " +
@@ -425,12 +360,12 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     },
     annotationsFor("ontology_resolve"),
     async ({ terms, kinds, within, country }) =>
-      queryOntology("/v1/ontology/resolve", { term: terms, kinds: kinds?.join(","), within, country }),
+      query("/v1/ontology/resolve", { term: terms, kinds: kinds?.join(","), within, country }, { compact: true }),
   );
 
   server.tool(
     "ontology_neighbors",
-    "FREE — no payment (needs a free API key in SYNTALIC_API_KEY). Use for what sits next to ONE " +
+    "Costs $0.01 per request (a malformed request or an id that names nothing is refused before anything is billed; no key needed). Use for what sits next to ONE " +
       "id from ontology_resolve. A category (spt:): ancestors, children, siblings, the product " +
       "types filed under it, its top brands and chains. A product type (gpc:): its ancestry and " +
       "every shelf it is filed under. A brand (brand:): the shelves it sells on (`footprint`), " +
@@ -453,17 +388,16 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     },
     annotationsFor("ontology_neighbors"),
     async ({ id, relations, limit, country }) =>
-      queryOntology("/v1/ontology/neighbors", {
-        id,
-        relations: relations?.join(","),
-        limit: limit?.toString(),
-        country,
-      }),
+      query(
+        "/v1/ontology/neighbors",
+        { id, relations: relations?.join(","), limit: limit?.toString(), country },
+        { compact: true },
+      ),
   );
 
   server.tool(
     "ontology_coverage",
-    "FREE — no payment (needs a free API key in SYNTALIC_API_KEY). Use before you hedge, choose a " +
+    "Costs $0.01 per request (a malformed request or an id that names nothing is refused before anything is billed; no key needed). Use before you hedge, choose a " +
       "grain (shelf or parent) or spend: how much evidence stands behind ids, and what was looked " +
       "at. Listings, freshness, `channels_present` and `channels_not_observed` (a channel with no " +
       "evidence at all), and `retailers_scanned`. These are the denominators of an absence claim: " +
@@ -485,7 +419,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     },
     annotationsFor("ontology_coverage"),
     async ({ ids, retailer, country }) =>
-      queryOntology("/v1/ontology/coverage", { id: ids, retailer, country }),
+      query("/v1/ontology/coverage", { id: ids, retailer, country }, { compact: true }),
   );
 
   // ── Shopper ($0.01/query) ───────────────────────────────────────

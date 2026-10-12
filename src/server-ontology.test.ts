@@ -1,4 +1,4 @@
-// The ontology on the MCP surface: three free tools, the id parameters on the paid tools, the
+// The ontology on the MCP surface: three one-cent tools, the id parameters on the paid tools, the
 // playbooks as prompts and resources, the annotations. Driven through a real client over an
 // in-memory transport, against a stubbed fetch, so what is asserted is what a client sees and what
 // goes over the wire.
@@ -35,8 +35,10 @@ const realFetch = globalThis.fetch;
 async function connect(apiKey: string | undefined): Promise<Client> {
   // the paid fetch wraps the global at creation, so the stub goes in first
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
-    const headers = Object.fromEntries(new Headers(init?.headers).entries());
+    // the paid fetch hands over a built Request, so headers live on it, not on init
+    const req = new Request(input, init);
+    const url = new URL(req.url);
+    const headers = Object.fromEntries(req.headers.entries());
     seen.push({ url, headers });
     return new Response(JSON.stringify(reply.body), {
       status: reply.status,
@@ -67,7 +69,7 @@ afterEach(() => {
 });
 
 describe("the three ontology tools", () => {
-  it("send a batch as repeated term=, with the key, and return compact JSON", async () => {
+  it("send a batch as repeated term=, with the key if one is set, and return compact JSON", async () => {
     reply = { status: 200, body: { results: [{ term: "a" }, { term: "b" }], schema_version: "ontology/1" } };
     const client = await connect(ONTOLOGY_KEY);
     const out = await client.callTool({
@@ -105,26 +107,40 @@ describe("the three ontology tools", () => {
     assert.equal(c!.url.searchParams.get("retailer"), "retailer:costco");
   });
 
-  it("without a key say how to get one, and make no request", async () => {
+  it("need no key: they are paid tools, so the request goes out without one", async () => {
+    reply = { status: 200, body: { results: [{ term: "quest" }] } };
     const client = await connect(undefined);
     const out = (await client.callTool({ name: "ontology_resolve", arguments: { terms: ["quest"] } })) as { isError?: boolean };
-    assert.equal(out.isError, true);
-    assert.match(text(out), /SYNTALIC_API_KEY/);
-    assert.equal(seen.length, 0);
+    assert.equal(out.isError, undefined);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.headers["x-api-key"], undefined);
+    assert.equal(text(out), JSON.stringify(reply.body));
   });
 
-  it("turn the API's refusals into something a person can act on", async () => {
-    const client = await connect(ONTOLOGY_KEY);
-    reply = { status: 401, body: { error: { code: "API_KEY_REQUIRED", message: "An API key is required." } } };
-    let out = await client.callTool({ name: "ontology_resolve", arguments: { terms: ["quest"] } });
-    assert.match(text(out), /API_KEY_REQUIRED: An API key is required\./);
-    assert.match(text(out), /SYNTALIC_API_KEY is a valid/);
-    reply = { status: 503, body: { error: { code: "NOT_PUBLISHED", message: "not published" } } };
-    out = await client.callTool({ name: "ontology_resolve", arguments: { terms: ["quest"] } });
-    assert.match(text(out), /may not be published yet/);
-    reply = { status: 400, body: { error: { code: "INVALID_PARAMS", message: "kinds has an unknown kind 'x'." } } };
-    out = await client.callTool({ name: "ontology_resolve", arguments: { terms: ["quest"] } });
-    assert.match(text(out), /INVALID_PARAMS: kinds has an unknown kind/);
+  it("are described as costing a cent, and are not listed as free", async () => {
+    const client = await connect(undefined);
+    const { tools } = await client.listTools();
+    for (const name of ["ontology_resolve", "ontology_neighbors", "ontology_coverage"]) {
+      const t = tools.find((x) => x.name === name)!;
+      assert.match(t.description ?? "", /Costs \$0\.01 per request/, `${name} states its price`);
+      assert.equal(t.annotations?.readOnlyHint, false, `${name} is not read-only`);
+      assert.doesNotMatch(t.description ?? "", /SYNTALIC_API_KEY|FREE/, `${name} still talks about a key`);
+    }
+  });
+
+  it("hand the API's free refusals to the caller as an error, with the API's own words", async () => {
+    const client = await connect(undefined);
+    for (const [status, code, message] of [
+      [400, "INVALID_PARAMS", "kinds has an unknown kind 'x'."],
+      [404, "NOT_FOUND", "No shelf 'spt:fb-9-9-9-9' in the ontology. Nothing was billed for this request."],
+      [503, "NOT_PUBLISHED", "The ontology tables are not published on this deployment yet."],
+    ] as const) {
+      reply = { status, body: { error: { code, message } } };
+      const out = (await client.callTool({ name: "ontology_resolve", arguments: { terms: ["quest"] } })) as { isError?: boolean };
+      assert.equal(out.isError, true, String(status));
+      assert.match(text(out), new RegExp(`Error ${status}:`));
+      assert.match(text(out), new RegExp(code));
+    }
   });
 
   it("bound a batch (a batch over the cap never leaves the client)", async () => {
