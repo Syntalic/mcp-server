@@ -34,7 +34,7 @@ describe("MCP tool registry", () => {
   });
 
   it("only calls well-formed /v1/<tier>/<route> paths", () => {
-    const bad = queryPaths.filter((p) => !/^\/v1\/(shopper|marketing|analyst|social|reference|public)\/[a-z-]+$/.test(p));
+    const bad = queryPaths.filter((p) => !/^\/v1\/(shopper|marketing|analyst|social|reference|public|ontology)\/[a-z-]+$/.test(p));
     assert.deepEqual(bad, [], `malformed paths: ${bad.join(", ")}`);
   });
 
@@ -66,6 +66,12 @@ describe("MCP tool registry", () => {
       "/v1/analyst/category-concentration",
       "/v1/analyst/price-change-leaders",
     ]) {
+      assert.ok(queryPaths.includes(p), `no tool calls ${p}`);
+    }
+  });
+
+  it("exposes the free ontology routes", () => {
+    for (const p of ["/v1/ontology/resolve", "/v1/ontology/neighbors", "/v1/ontology/coverage"]) {
       assert.ok(queryPaths.includes(p), `no tool calls ${p}`);
     }
   });

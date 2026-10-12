@@ -98,6 +98,21 @@ Understand the shape and coverage of the catalog before spending on a paid query
 | `list_brands` | Brands with product counts (optional `q` prefix filter) |
 | `coverage_map` | Where the catalog is deep vs thin — quality status per retailer × country × category |
 
+### Ontology ($0.01/query)
+
+What a name means, what sits next to it, and how much evidence stands behind it. They cost one cent a
+call like the other lookups, with no key and no account: the wallet pays the same x402 or MPP
+challenge. A malformed request, an id that names nothing, or an ontology that is not published yet is
+refused before anything is billed. (The free catalog tools above are still the place to look around
+first.) Everything else stays available at once; nothing here routes the agent. Each answer ends with
+`suggested_next_calls`: calls that make sense next, with ids filled in and the price beside each.
+
+| Tool | Description |
+|------|-------------|
+| `ontology_resolve` | Names to ids: shelves, product types, brands, chains and (with `kinds`) products. Every match comes back, none ranked best; a name that fits two things returns both (`co_equal`). A miss says why and offers candidates. |
+| `ontology_neighbors` | What sits next to one id: a shelf's siblings and types, a brand's shelves and the chains that do and do not carry it, a chain's assortment |
+| `ontology_coverage` | How much evidence stands behind ids and which chains were scanned: the denominators of "not seen at X" |
+
 ### Shopper ($0.01/query)
 
 | Tool | Description |
@@ -173,6 +188,43 @@ All tools accept optional parameters:
 | `retailer` | Filter to a specific retailer (e.g. `amazon`, `walmart`, `costco`) |
 | `days` | Number of days to look back (where applicable) |
 
+### Ids on the paid tools
+
+A paid tool that takes a category or a brand also takes the id `ontology_resolve` returned, in place
+of the name, never with it:
+
+| Parameter | Stands for | Notes |
+|-----------|------------|-------|
+| `spt` | a shelf, e.g. `spt:fb-2-17-2-4` | instead of `category` |
+| `gpc` | a product type, e.g. `gpc:10008059` | instead of `category`; covers every shelf the type is filed under |
+| `brand_id` | a brand, e.g. `brand:b_ac1a1c7143cb2199` | instead of `brand` |
+| `entity_uid` | one exact product | on `best_price` and `price_history`, instead of `q` |
+
+A malformed or unknown id is refused before any payment is requested. Names still work as before.
+
+## Prompts and resources
+
+The playbooks for questions that take more than one call are **prompts** (each takes an optional
+`question`) and **resources**, and the six rules for using the ontology tools, and what each figure the
+pricing and shelf tools return means, are one resource each:
+
+| | |
+|---|---|
+| prompts | `position-on-shelf`, `diagnose-price-move`, `promo-pressure`, `retail-coverage`, `category-brief`, `buyer-pitch` |
+| resources | `syntalic://ontology/rules`, `syntalic://ontology/metrics` (each figure's definition, the tool and field that return it, and when it is withheld), `syntalic://playbooks` (the index), `syntalic://playbooks/<name>` |
+
+The playbooks are rendered from the same sources the Syntalic dashboard agent reads, so the two give the
+same advice; the metric definitions are rendered from the Syntalic repository's metric registry
+(`shared/pricing-canon/data/metrics.json`). `src/playbooks.generated.ts` is generated; edit it only by
+re-vendoring (see below).
+
+## Annotations
+
+Every tool carries MCP annotations, which clients may use to decide what to confirm. A paid tool is
+`readOnlyHint: false` and not idempotent (running it moves your money, and running it twice spends
+twice); the free tools are read-only and idempotent. Annotations are advisory: your wallet balance is
+the real limit.
+
 ## Configuration
 
 All env vars are optional — a wallet is auto-generated on first run.
@@ -181,7 +233,7 @@ All env vars are optional — a wallet is auto-generated on first run.
 |---------------------|-------------|
 | `SYNTALIC_EVM_PRIVATE_KEY` | Override the EVM key (Base + Tempo) from the wallet file |
 | `SYNTALIC_SOLANA_PRIVATE_KEY` | Override the Solana key from the wallet file |
-| `SYNTALIC_API_KEY` | Optional API key (payment is the primary auth) |
+| `SYNTALIC_API_KEY` | Optional. A staff bypass key, which skips payment on every paid tool. Payment is the normal way in, and nothing needs this; a free ontology key is not honoured, because the ontology is paid |
 | `SYNTALIC_API_BASE` | API base URL (default `https://api.syntalic.com`, HTTPS enforced) |
 | `SYNTALIC_SOLANA_RPC_URL` | Custom Solana RPC for balance checks (default `https://api.mainnet-beta.solana.com`, HTTPS enforced) |
 | `SYNTALIC_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
@@ -242,4 +294,15 @@ unreachable from any agent.
   called in a loop). It gates `npm publish`.
 - `npm run check:parity` hits the live `/openapi.json` and diffs both ways. It is
   the only check that catches a route shipping in the API with no tool. **Run it
-  before publishing.**
+  before publishing.** It also checks the id parameters: where the spec declares
+  `spt`, `gpc`, `brand_id` or `entity_uid` on an operation, the tool must pass it
+  through. While the API's ontology is closed (neither `ONTOLOGY_ENABLED` nor
+  `ONTOLOGY_API_KEYS` set) the spec lists no `/v1/ontology/*` route; the check says so and does not fail, but then it
+  has no id parameters to compare, so run it again once the API opens. To check
+  against a saved spec instead of the network: `SYNTALIC_SPEC_FILE=spec.json npm run check:parity`.
+- `src/server-ontology.test.ts` drives the server through a real client over an
+  in-memory transport, against a stubbed `fetch`: what the ontology tools send, the
+  id parameters on the paid tools, the annotations, the prompts and the resources.
+- `src/playbooks.generated.ts` is vendored from `shared/playbooks` in the Syntalic
+  repository (`node shared/playbooks/sync.mjs` renders it; copy it here). Do not
+  edit it in this repository.
