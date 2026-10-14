@@ -648,7 +648,8 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "Get the price architecture of one category shelf: the window that defines " +
       "'similarly priced' there, plus the shelf's price tiers (entry through luxury). " +
       "Use it to decide whether two products actually compete on price, or to place a " +
-      "price within its shelf. Scoped by a browse-node path, not a category term. " +
+      "price within its shelf. Scoped by a browse-node path, not a category term. Name a " +
+      "brand to see how many of its products sit in each tier (`tiers[].brand_products`). " +
       "Costs $0.02.",
     {
       node: z
@@ -658,9 +659,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
           "Category path — 'electronics', 'electronics/headphones', or a deeper rung. Or send spt instead.",
         ),
       spt: sptSchema,
+      brand: brandNameSchema("Brand whose products to count per tier (the position-on-shelf playbook's step 4)"),
+      brand_id: brandIdSchema,
     },
     annotationsFor("price_bands"),
-    async ({ node, spt }) => query("/v1/analyst/price-bands", { node, spt }),
+    async ({ node, spt, brand, brand_id }) => query("/v1/analyst/price-bands", { node, spt, brand, brand_id }),
   );
 
   server.tool(

@@ -83,3 +83,17 @@ describe("social tool descriptions", () => {
     }
   });
 });
+
+describe("price_bands", () => {
+  // The position-on-shelf playbook's step 4 calls price_bands "with the brand named"; on the MCP
+  // the tool took the shelf only, so an agent following the playbook could not do that step.
+  it("passes a brand, by name or by id, with the shelf", async () => {
+    const client = await connect();
+    await client.callTool({ name: "price_bands", arguments: { spt: "spt:el-1", brand_id: "brand:b_1" } });
+    await client.callTool({ name: "price_bands", arguments: { node: "electronics/headphones", brand: "sony" } });
+    assert.equal(seen[0]!.searchParams.get("brand_id"), "brand:b_1");
+    assert.equal(seen[0]!.searchParams.get("spt"), "spt:el-1");
+    assert.equal(seen[1]!.searchParams.get("brand"), "sony");
+    assert.equal(seen[1]!.searchParams.get("node"), "electronics/headphones");
+  });
+});

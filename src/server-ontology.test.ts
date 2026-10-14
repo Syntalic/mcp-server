@@ -171,7 +171,7 @@ describe("the id parameters on the paid tools", () => {
     availability_index: ["spt", "gpc", "brand_id"],
     inflation_tracker: ["spt", "gpc"],
     price_dispersion: ["spt", "gpc"],
-    price_bands: ["spt"],
+    price_bands: ["spt", "brand_id", "brand"],
     category_summary: ["spt", "gpc"],
     category_concentration: ["spt", "gpc"],
     price_change_leaders: ["spt", "gpc", "brand_id"],
