@@ -12,8 +12,8 @@ import { getErc20Balance } from "./tempo-rpc.js";
 
 const BASE_NETWORK_ID = "eip155:8453";
 const SOLANA_NETWORK_ID = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
-const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
-const DEFAULT_TEMPO_RPC_URL = "https://rpc.tempo.xyz";
+export const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
+export const DEFAULT_TEMPO_RPC_URL = "https://rpc.tempo.xyz";
 const TEMPO_LABEL = "tempo:4217";
 
 // Solana exposes no dedicated "insufficient funds" settle code — transaction_simulation_failed
@@ -95,7 +95,7 @@ function sanitizeReason(err: unknown, ...secrets: string[]): string {
  * plus non-loopback hosts prevents an attacker with env-write access from exfiltrating
  * addresses or spoofing balances via a hostile local service (cf. SSRF to 169.254.169.254).
  */
-function resolveRpcUrl(name: string, envValue: string | undefined, fallback: string): string {
+export function resolveRpcUrl(name: string, envValue: string | undefined, fallback: string): string {
   const raw = envValue?.trim();
   if (!raw) return fallback;
   let parsed: URL;

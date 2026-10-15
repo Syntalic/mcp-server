@@ -58,9 +58,9 @@ When both env vars are set, `~/.syntalic/wallet.json` is ignored entirely.
 | Command | Purpose |
 |---------|---------|
 | `npx @syntalic/mcp-server` | Start the MCP server (default behavior) |
-| `... --setup` | Interactive setup: choose wallet path, wire Claude Code |
+| `... --setup` | Interactive setup: choose wallet path, wire Claude Code. `--yes` takes every default; `--no-claude` skips Claude Code. Piped answers work, and a closed stdin never configures Claude Code |
 | `... --export-keys` | Print private keys for backup or importing into Phantom/MetaMask |
-| `... --info` | Show wallet addresses, paths, endpoints, and backup status |
+| `... --info` | Show wallet addresses, live balances, paths, endpoints, and backup status |
 | `... --help` | Usage overview |
 
 ## Supported Payment Networks
@@ -157,20 +157,21 @@ first.) Everything else stays available at once; nothing here routes the agent. 
 
 ### Social ($0.03/query)
 
-TikTok and Instagram only. Every route is scoped to one category root: there is no
-wildcard, because these answers are ranked comparisons. A `404 NOT_PUBLISHED` means we
-do not publish that rollup yet, **not** that the category is quiet, and nothing is billed
-for it.
+TikTok and Instagram only. Every route is scoped to one category, named by its Shopify taxonomy
+path (`health-beauty`, `food-beverages-tobacco`, `food-beverages-tobacco/beverages`): there is no
+wildcard, because these answers are ranked comparisons. An unknown category is refused free of
+charge with the published roots listed. A `404 NOT_PUBLISHED` means the latest run did not publish
+that rollup, **not** that the category is quiet, and nothing is billed for it.
 
 | Tool | Description |
 |------|-------------|
 | `creator_index` | Creators ranked by mention volume in a category |
 | `brand_share` | Share of social conversation by brand |
-| `category_structure` | Which subcategories own a category's conversation **(rollup not published yet)** |
+| `category_structure` | Which subcategories own a category's conversation |
 | `brand_momentum` | Brands rising, falling or newly appearing |
-| `topic_trends` | Emerging conversation topics **(rollup not published yet)** |
-| `product_type_trends` | Attention by product type rather than by brand **(rollup not published yet)** |
-| `social_series` | Weekly mentions and views time series for one subject |
+| `topic_trends` | Emerging conversation topics |
+| `product_type_trends` | Attention by product type rather than by brand |
+| `social_series` | Weekly mentions and views time series for one subject (`brand`, or `subject` + `subject_kind`) |
 
 ### Scout, cross-domain ($0.05/query)
 
@@ -185,7 +186,7 @@ The only routes that bind both corpora to one category axis and one brand key.
 
 | Tool | Description |
 |------|-------------|
-| `wallet_info` | Show your wallet addresses and funding instructions |
+| `wallet_info` | Show your wallet addresses, their live balance on each chain, and funding instructions |
 
 ## Parameters
 
@@ -246,6 +247,7 @@ All env vars are optional — a wallet is auto-generated on first run.
 | `SYNTALIC_API_BASE` | API base URL (default `https://api.syntalic.com`, HTTPS enforced) |
 | `SYNTALIC_SOLANA_RPC_URL` | Custom Solana RPC for balance checks (default `https://api.mainnet-beta.solana.com`, HTTPS enforced) |
 | `SYNTALIC_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
+| `SYNTALIC_BASE_RPC_URL` | Custom Base RPC for the balances `wallet_info` and `--info` show (default `https://mainnet.base.org`, HTTPS enforced) |
 | `SYNTALIC_PAYMENT_NETWORK` | Pay on one chain only: `solana`, `base` or `tempo` (default: try all, in that order). Any other value stops the server at startup |
 | `SYNTALIC_PAYMENT_TRACE` | `1` writes one stderr line per paid call: the chain that settled, the payer and the transaction |
 

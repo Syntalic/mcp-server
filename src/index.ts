@@ -9,7 +9,10 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 
 if (process.argv.includes("--setup")) {
   const { runSetup } = await import("./setup.js");
-  await runSetup();
+  await runSetup({
+    yes: process.argv.includes("--yes") || process.argv.includes("-y"),
+    noClaude: process.argv.includes("--no-claude"),
+  });
   process.exit(0);
 }
 

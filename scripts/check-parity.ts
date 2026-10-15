@@ -54,7 +54,6 @@ const ID_PARAMS = ["spt", "gpc", "brand_id", "entity_uid"];
 const KNOWN_GAPS: Record<string, string[]> = {
   "/v1/shopper/deal-finder": ["brand_id"], // the tool has no brand filter
   "/v1/analyst/retailer-index": ["spt", "gpc"], // the tool has no category filter
-  "/v1/analyst/price-bands": ["brand_id"], // the tool takes the shelf only
   "/v1/shopper/price-drop-alert": ["entity_uid"], // the tool takes q only
 };
 const calls = new Map<string, Set<string>>();

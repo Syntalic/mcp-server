@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { spawnSync } from "node:child_process";
 import { readEnv } from "./lib/env.js";
+import { formatBalances, readBalances } from "./lib/balances.js";
 import {
   loadOrCreateWallet,
   loadWallet,
@@ -9,12 +10,61 @@ import {
   WALLET_FILE,
 } from "./lib/wallet.js";
 
-async function ask(
-  rl: ReturnType<typeof createInterface>,
-  question: string,
-): Promise<string> {
-  const answer = await rl.question(question);
-  return answer.trim();
+export interface SetupOptions {
+  /** --yes: take every default without asking (new wallet, configure Claude Code). */
+  yes?: boolean;
+  /** --no-claude: never offer to run `claude mcp add`. */
+  noClaude?: boolean;
+}
+
+/**
+ * Answers read line by line from stdin, typed or piped. readline/promises' question() loses lines
+ * that arrive before it is asked (a pipe delivers them all at once) and throws ERR_USE_AFTER_CLOSE
+ * once stdin reaches EOF, which crashed `printf '1\nn\n' | … --setup` right after it had
+ * created the wallet. Here lines queue until asked for, and EOF answers null: no answer, so the
+ * caller takes the safe default.
+ */
+export interface Prompter {
+  ask(question: string): Promise<string | null>;
+  close(): void;
+}
+
+export function createPrompter(
+  input: NodeJS.ReadableStream = process.stdin,
+  output: NodeJS.WritableStream = process.stdout,
+): Prompter {
+  const rl = createInterface({ input, terminal: false });
+  const queued: string[] = [];
+  const waiting: Array<(answer: string | null) => void> = [];
+  let closed = false;
+  rl.on("line", (line) => {
+    const next = waiting.shift();
+    if (next) next(line.trim());
+    else queued.push(line.trim());
+  });
+  rl.on("close", () => {
+    closed = true;
+    for (const next of waiting.splice(0)) next(null);
+  });
+  const typed = Boolean((input as { isTTY?: boolean }).isTTY);
+  return {
+    ask(question) {
+      output.write(question);
+      const answer = queued.shift();
+      if (answer !== undefined) {
+        if (!typed) output.write(answer + "\n"); // echo a piped answer so the transcript reads right
+        return Promise.resolve(answer);
+      }
+      if (closed) {
+        output.write("\n");
+        return Promise.resolve(null);
+      }
+      return new Promise((resolve) => waiting.push(resolve));
+    },
+    close() {
+      rl.close();
+    },
+  };
 }
 
 export function printHelp() {
@@ -24,39 +74,70 @@ export function printHelp() {
   Usage:
     npx @syntalic/mcp-server                 Start the MCP server (default)
     npx @syntalic/mcp-server --setup         Interactive setup (wallet + Claude Code)
+        --yes, -y                            Take every default without asking
+        --no-claude                          Do not offer to configure Claude Code
+                                             (piped or closed stdin never configures it)
     npx @syntalic/mcp-server --export-keys   Print your private keys for backup/import
-    npx @syntalic/mcp-server --info          Show wallet addresses, paths, and status
+    npx @syntalic/mcp-server --info          Show wallet addresses, live balances, paths and status
     npx @syntalic/mcp-server --help          Show this help
 
-  Available Tools:
+  Tools (every paid tool states its price in its description):
 
-    Shopper (0.01 USDC/query)
-      best_price          Find the cheapest price across retailers
-      price_history       Price trends over time
-      deal_finder         Current deals in a category
-      price_drop_alert    Recent price drops
+    Free
+      wallet_info             Wallet addresses, live balances, funding instructions
+      catalog_overview        The shape of the catalog: products, listings, brands
+      browse_categories       The category tree with product counts
+      list_retailers          Retailers in the catalog
+      list_brands             Brands in the catalog
+      coverage_map            Where the catalog is deep and where it is thin
 
-    Marketing (0.01 USDC/query)
-      competitive_landscape   Competitive pricing overview
-      brand_tracker           Brand pricing and positioning
-      promo_intelligence      Promotional activity intelligence
-      share_of_shelf          Brand share of shelf analysis
-      price_positioning       Price positioning vs competitors
+    Ontology ($0.01): names to ids, and the evidence behind them
+      ontology_resolve        A brand, category, product type or retailer name -> ids
+      ontology_neighbors      What sits next to one id
+      ontology_coverage       How much evidence stands behind ids, and what was scanned
 
-    Analyst (0.02 USDC/query)
-      inflation_tracker       Category price inflation trends
-      price_dispersion        Price variance across retailers
-      retailer_index          Pricing index for a retailer
-      category_summary        Comprehensive category summary
-      price_bands             Price window + tiers for a category shelf
+    Shopper ($0.01)
+      best_price              The cheapest current price across retailers
+      price_history           A product's price over time
+      deal_finder             Current deals in a category
+      price_drop_alert        Recent price drops on a product
 
-    Reference (0.01 USDC/request, up to 100 ids per request)
+    Marketing ($0.01)
+      competitive_landscape   Competitive pricing in a category
+      brand_tracker           A brand's pricing and positioning
+      promo_intelligence      Promotion frequency and depth
+      share_of_shelf          Brand share of a shelf
+      price_positioning       A brand's price tier on its shelf
+      brand_breakdown         A brand's assortment by category
+      retailer_assortment     Which chains carry a brand or a category
+      availability_index      Out-of-stock rates by retailer or category
+
+    Analyst ($0.02)
+      inflation_tracker       Like-for-like price change in a category
+      price_dispersion        Price spread across a category
+      retailer_index          A retailer's price index
+      price_bands             A shelf's price tiers
+      category_summary        A category's pricing summary
+      category_concentration  How few brands own a shelf (HHI, CR4)
+      price_change_leaders    The biggest price movers
+
+    Reference ($0.01 per request, up to 100 ids)
       classify_product_type   Product type or browse node -> GS1 GPC brick
       gpc_reverse_lookup      GPC code -> the browse nodes mapped onto it
       gpc_brick_attributes    GS1 attribute schema for a brick
 
-    Utility
-      wallet_info             Show wallet addresses and funding instructions
+    Social ($0.03)
+      creator_index           Creators driving mention volume
+      brand_share             Share of conversation by brand
+      category_structure      Which subcategories own the conversation
+      brand_momentum          Brands rising, falling or new in conversation
+      topic_trends            Emerging conversation topics
+      product_type_trends     Attention by product type
+      social_series           Weekly mentions and views for a brand or category
+
+    Scout ($0.05)
+      attention_vs_shelf      Share of conversation against share of shelf
+      launch_buzz             New arrivals against the conversation around them
 
   Payment: USDC on Solana, USDC on Base, or USDC.e on Tempo.
            Fund any chain — the client auto-selects whichever has balance.
@@ -128,8 +209,8 @@ function printByoInstructions() {
   console.log("");
 }
 
-export async function runSetup() {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+export async function runSetup(opts: SetupOptions = {}) {
+  const rl = createPrompter();
   try {
     console.log("");
     console.log("  Syntalic Pricing Intelligence — Setup");
@@ -148,10 +229,10 @@ export async function runSetup() {
       console.log("        You manage the keys; the MCP reads them from env.");
       console.log("        Best for CI, shared setups, or existing wallets.");
       console.log("");
-      const choice = await ask(rl, "  Choice (1/2, default 1): ");
+      const choice = opts.yes ? "1" : await rl.ask("  Choice (1/2, default 1): ");
       if (choice === "2") {
         printByoInstructions();
-        await configureClaudeCode(rl);
+        await configureClaudeCode(rl, opts);
         return;
       }
     }
@@ -182,7 +263,7 @@ export async function runSetup() {
       console.log("     sent to the above addresses become unrecoverable.");
     }
 
-    await configureClaudeCode(rl);
+    await configureClaudeCode(rl, opts);
     printExampleQueries();
   } finally {
     // Always close the readline interface — an unclosed rl holds stdin open
@@ -272,11 +353,14 @@ export async function runInfo() {
     "https://api.mainnet-beta.solana.com (default)";
   const tempoRpc =
     readEnv("TEMPO_RPC_URL").value ?? "https://rpc.tempo.xyz (default)";
+  const baseRpc =
+    readEnv("BASE_RPC_URL").value ?? "https://mainnet.base.org (default)";
   const pinVar = readEnv("PAYMENT_NETWORK");
   const payment = pinVar.value?.trim()
     ? `${pinVar.value.trim()} only (${pinVar.name})`
     : "solana, then base, then tempo (default)";
 
+  let addresses: { evm: string; solana: string } | undefined;
   if (envEvm && envSolana) {
     console.log(
       "  Wallet source: environment variables (" + evmVar.name + " + " + solanaVar.name + ")",
@@ -284,6 +368,13 @@ export async function runInfo() {
     console.log(
       "                 ~/.syntalic/wallet.json is ignored when both env vars are set.",
     );
+    try {
+      addresses = await addressesFromKeys(envEvm, envSolana);
+      console.log("    Base / Tempo:   " + addresses.evm);
+      console.log("    Solana:         " + addresses.solana);
+    } catch {
+      console.log("    (a key is malformed; the server will say which at startup)");
+    }
   } else if (walletFileExists()) {
     // Read-only — we never want --info to create a wallet from scratch. If
     // the file is missing keys for either chain, `loadWallet` silently migrates
@@ -295,6 +386,7 @@ export async function runInfo() {
       console.log("    Created:        " + wallet.createdAt);
       console.log("    Base / Tempo:   " + wallet.evmAddress);
       console.log("    Solana:         " + wallet.solanaAddress);
+      addresses = { evm: wallet.evmAddress, solana: wallet.solanaAddress };
       console.log(
         "    Keys exported:  " +
           (wallet.backupAcknowledgedAt ?? "NO — run `--export-keys` to back up"),
@@ -311,21 +403,45 @@ export async function runInfo() {
     console.log("  + SYNTALIC_SOLANA_PRIVATE_KEY to bring your own.");
   }
 
+  if (addresses) {
+    console.log("");
+    console.log("  Balances (read live just now)");
+    for (const line of formatBalances(await readBalances(addresses.evm, addresses.solana))) {
+      console.log("  " + line);
+    }
+  }
+
   console.log("");
   console.log("  Endpoints");
   console.log("    API base:       " + apiBase);
   console.log("    Solana RPC:     " + solanaRpc);
+  console.log("    Base RPC:       " + baseRpc);
   console.log("    Tempo RPC:      " + tempoRpc);
   console.log("    Payment chain:  " + payment);
   console.log("");
 }
 
-async function configureClaudeCode(rl: ReturnType<typeof createInterface>) {
+/** The public addresses for env-var keys, derived the same way the server derives them. */
+async function addressesFromKeys(evmKey: string, solanaKey: string): Promise<{ evm: string; solana: string }> {
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const { base58 } = await import("@scure/base");
+  const keypair = base58.decode(solanaKey);
+  if (keypair.length !== 64) throw new Error("Solana key is not a 64-byte keypair");
+  return {
+    evm: privateKeyToAccount(evmKey as `0x${string}`).address,
+    solana: base58.encode(keypair.slice(32)),
+  };
+}
+
+async function configureClaudeCode(rl: Prompter, opts: SetupOptions) {
   console.log("");
-  const configureClaude = await ask(
-    rl,
-    "  Auto-configure Claude Code? (Y/n): ",
-  );
+  // No answer (stdin closed: a script or an agent) is a "no": running `claude mcp add` is a change
+  // to the user's config, and only a person, or --yes, should make it.
+  const configureClaude = opts.noClaude
+    ? "n"
+    : opts.yes
+      ? "y"
+      : ((await rl.ask("  Auto-configure Claude Code? (Y/n): ")) ?? "n");
 
   const claudeArgs = [
     "mcp",
@@ -374,7 +490,7 @@ async function configureClaudeCode(rl: ReturnType<typeof createInterface>) {
   console.log("");
   console.log("  Running: " + resolvedPath);
   console.log("  Args:    " + claudeArgs.join(" "));
-  const confirm = await ask(rl, "  Proceed? (Y/n): ");
+  const confirm = opts.yes ? "y" : ((await rl.ask("  Proceed? (Y/n): ")) ?? "n");
   if (confirm.toLowerCase() === "n") {
     console.log("");
     console.log("  Skipped. Run manually when ready:");

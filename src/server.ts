@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { createPaidFetch, PaymentError } from "./lib/fetch.js";
+import { formatBalances, readBalances } from "./lib/balances.js";
 import { registerGuidance, SERVER_INSTRUCTIONS } from "./guidance.js";
 import {
   countrySchema,
@@ -51,6 +52,14 @@ const categoryNameSchema = (what: string) =>
 const brandNameSchema = (what: string) =>
   z.string().optional().describe(`${what}. Send this OR brand_id (from ontology_resolve), not both.`);
 
+/** The social data is keyed by Shopify taxonomy paths. The old example, 'beauty', is not one of them
+ *  and came back 404 NO_RESULTS (free) every time. */
+const socialCategorySchema = z
+  .string()
+  .describe(
+    "Shopify taxonomy path: a root such as 'health-beauty', 'food-beverages-tobacco' or 'electronics', or a path under one ('food-beverages-tobacco/beverages'). An unknown one is refused free of charge with the published roots listed.",
+  );
+
 export interface ServerConfig {
   apiBase: string;
   evmPrivateKey: string;
@@ -80,11 +89,15 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "wallet_info",
-    "Show your wallet addresses and funding instructions for all supported chains. Call this if a payment fails or to check your wallet. Keys are never exposed via MCP tools — to see addresses + config without revealing keys, the user can run `npx @syntalic/mcp-server --info` in their terminal. To export private keys for backup/import, they run `--export-keys` instead.",
+    "Show your wallet addresses, their live USDC balance on each chain, and funding instructions. Call this if a payment fails, to check whether funding has landed, or to check your wallet. Free. Keys are never exposed via MCP tools — to see addresses + config without revealing keys, the user can run `npx @syntalic/mcp-server --info` in their terminal. To export private keys for backup/import, they run `--export-keys` instead.",
     {},
     annotationsFor("wallet_info"),
     async () => {
+      const balances = await readBalances(evmAddress, solanaAddress);
       const lines: string[] = [
+        "Balances (read live just now):",
+        ...formatBalances(balances),
+        "",
         "Wallets (client auto-picks the chain with balance per query):",
         "",
         "  Base / Tempo (EVM): " + evmAddress,
@@ -96,7 +109,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         "    • Fund with USDC on Solana — https://www.coinbase.com or any Solana wallet",
         "    • USDC mint: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "",
-        "Each query costs 0.01-0.02 USDC. Even 1 USDC gets you 50-100 queries.",
+        "Each paid query costs $0.01 to $0.05; every tool's description states its price. 1 USDC buys 20 to 100 queries.",
         "",
         "CLI commands (run in your own terminal, not via MCP):",
         "  --info         Show wallet paths, endpoints, and backup status (no keys shown)",
@@ -635,7 +648,8 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "Get the price architecture of one category shelf: the window that defines " +
       "'similarly priced' there, plus the shelf's price tiers (entry through luxury). " +
       "Use it to decide whether two products actually compete on price, or to place a " +
-      "price within its shelf. Scoped by a browse-node path, not a category term. " +
+      "price within its shelf. Scoped by a browse-node path, not a category term. Name a " +
+      "brand to see how many of its products sit in each tier (`tiers[].brand_products`). " +
       "Costs $0.02.",
     {
       node: z
@@ -645,9 +659,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
           "Category path — 'electronics', 'electronics/headphones', or a deeper rung. Or send spt instead.",
         ),
       spt: sptSchema,
+      brand: brandNameSchema("Brand whose products to count per tier (the position-on-shelf playbook's step 4)"),
+      brand_id: brandIdSchema,
     },
     annotationsFor("price_bands"),
-    async ({ node, spt }) => query("/v1/analyst/price-bands", { node, spt }),
+    async ({ node, spt, brand, brand_id }) => query("/v1/analyst/price-bands", { node, spt, brand, brand_id }),
   );
 
   server.tool(
@@ -847,7 +863,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "Rank the creators driving mention volume in a category. Use it to find who is " +
       "actually talking about a shelf, not who has the biggest following. Costs $0.03.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
@@ -871,7 +887,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "requests; `tied_with` is pairwise proximity rather than an equivalence class. " +
       "Costs $0.03.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
@@ -893,11 +909,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "category_structure",
     "Show which subcategories own a category's conversation. Use it before brand-level " +
-      "questions, to see where the attention actually sits. NOTE: this rollup is not " +
-      "published yet and currently returns 404 NOT_PUBLISHED for every category; that is " +
-      "a gap in what we publish, not a finding, and nothing is billed. Costs $0.03.",
+      "questions, to see where the attention actually sits. A 404 NOT_PUBLISHED means the " +
+      "latest run did not publish this rollup: a gap in what we publish, not a finding about " +
+      "the category, and nothing is billed. Costs $0.03.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
@@ -919,7 +935,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "Rank brands by conversation momentum in a category: who is rising, falling, or " +
       "newly appearing. `status: new` is emerging-brand detection. Costs $0.03.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
@@ -943,11 +959,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "topic_trends",
-    "Emerging conversation topics in a category. NOTE: this rollup is not published yet " +
-      "and currently returns 404 NOT_PUBLISHED for every category; that is a gap in what " +
-      "we publish, not a finding, and nothing is billed. Costs $0.03.",
+    "Emerging conversation topics in a category. A 404 NOT_PUBLISHED means the latest run " +
+      "did not publish this rollup: a gap in what we publish, not a finding about the " +
+      "category, and nothing is billed. Costs $0.03.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
@@ -967,11 +983,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "product_type_trends",
     "Attention by product type within a category, so you can see which kind of thing is " +
-      "being talked about rather than which brand. NOTE: this rollup is not published yet " +
-      "and currently returns 404 NOT_PUBLISHED for every category; that is a gap in what " +
-      "we publish, not a finding, and nothing is billed. Costs $0.03.",
+      "being talked about rather than which brand. A 404 NOT_PUBLISHED means the latest run " +
+      "did not publish this rollup: a gap in what we publish, not a finding about the " +
+      "category, and nothing is billed. Costs $0.03.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       window: windowSchema,
       platform: platformSchema,
       organic_only: organicOnlySchema,
@@ -991,8 +1007,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
   server.tool(
     "social_series",
     "Weekly mentions and views time series for one subject: a brand or a " +
-      "category. Use it to chart a trend rather than rank a moment. `subject` is " +
-      "required unless subject_kind is 'category'. Costs $0.03.",
+      "category. Use it to chart a trend rather than rank a moment. Name the brand in " +
+      "`brand` (as on the other social tools) or `subject`; one of them is required " +
+      "unless subject_kind is 'category'. Costs $0.03.",
     {
       category: z.string().describe("Category root slug the subject is scoped to"),
       subject_kind: z
@@ -1002,7 +1019,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       subject: z
         .string()
         .optional()
-        .describe("The subject key (brand key). Required unless subject_kind='category'."),
+        .describe("The subject key (brand key). This or `brand` is required unless subject_kind='category'."),
+      brand: z
+        .string()
+        .optional()
+        .describe("The brand to chart: the same as `subject` with subject_kind 'brand'. Send one of the two."),
       platform: platformSchema,
       organic_only: organicOnlySchema,
       weeks: z
@@ -1014,15 +1035,29 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         .describe("How many trailing ISO weeks to return (default 26, max 104)"),
     },
     annotationsFor("social_series"),
-    async ({ category, subject_kind, subject, platform, organic_only, weeks }) =>
-      query("/v1/social/series", {
+    async ({ category, subject_kind, subject, brand, platform, organic_only, weeks }) => {
+      // `brand` is what every sibling social tool calls it; passing it here used to be a 400.
+      if (brand !== undefined && subject !== undefined && brand !== subject) {
+        return {
+          content: [{ type: "text" as const, text: "Send `brand` or `subject`, not both: they name the same thing. Nothing was billed." }],
+          isError: true,
+        };
+      }
+      if (brand !== undefined && subject_kind === "category") {
+        return {
+          content: [{ type: "text" as const, text: "`brand` charts a brand, but subject_kind is 'category'. Drop one. Nothing was billed." }],
+          isError: true,
+        };
+      }
+      return query("/v1/social/series", {
         category,
-        subject_kind,
-        subject,
+        subject_kind: subject_kind ?? (brand !== undefined ? "brand" : undefined),
+        subject: subject ?? brand,
         platform,
         organic_only: organic_only ? "true" : undefined,
         weeks: weeks?.toString(),
-      }),
+      });
+    },
   );
 
   // ── Scout / cross-domain ($0.05/query) ──────────────────────────
@@ -1037,7 +1072,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "with attention and no distribution is a stocking opportunity; the reverse is " +
       "shelf that is not earning its space. Costs $0.05.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       country: countrySchema,
       window: windowSchema,
       platform: platformSchema,
@@ -1061,7 +1096,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "New shelf arrivals set against the conversation around their brand, so you can " +
       "tell a launch that landed from one that shipped in silence. Costs $0.05.",
     {
-      category: z.string().describe("Category root slug, e.g. 'beauty'"),
+      category: socialCategorySchema,
       country: countrySchema,
       window: windowSchema,
       platform: platformSchema,
