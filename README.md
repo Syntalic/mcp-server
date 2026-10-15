@@ -77,12 +77,21 @@ Base and Tempo share the same EVM address. Solana uses a separate keypair. The c
 
 On every query, the client:
 
-1. Derives your Solana USDC ATA and checks balance via public RPC. Enough → pay on Solana. Not enough → skip.
+1. Derives your Solana USDC ATA and checks balance via public RPC. Enough → pay on Solana. Not enough, or the balance could not be read → skip.
 2. Attempts payment on Base. Falls through on insufficient-balance errors only.
 3. Checks USDC.e balance on Tempo, signs an MPP receipt, retries.
 4. All chains exhausted → throws a clear `PaymentError` listing what happened per chain.
 
-Balance pre-checks are **optimizations**. If an RPC is rate-limited or down, the client attempts payment anyway — requests never hang on RPC health.
+The Solana check fails closed: the public Solana RPC rate-limits often, and an unreadable balance is
+skipped (the `PaymentError` says so) rather than attempted, so a rate-limited RPC never turns into an
+opaque `429` while Base or Tempo holds the funds. If your funds are on Solana, set
+`SYNTALIC_SOLANA_RPC_URL` to a dedicated RPC. The Tempo check is an optimization: if its RPC is down,
+the client attempts payment anyway. Requests never hang on RPC health (2-second timeouts).
+
+To pay on one chain only, set `SYNTALIC_PAYMENT_NETWORK` to `solana`, `base` or `tempo`; the other
+chains are skipped and named as skipped in any `PaymentError`. Pinned to `solana`, an unreadable
+balance is attempted anyway. `SYNTALIC_PAYMENT_TRACE=1` writes one stderr line per paid call naming
+the chain that settled, the payer and the transaction.
 
 ## Tools
 
@@ -239,6 +248,8 @@ All env vars are optional — a wallet is auto-generated on first run.
 | `SYNTALIC_SOLANA_RPC_URL` | Custom Solana RPC for balance checks (default `https://api.mainnet-beta.solana.com`, HTTPS enforced) |
 | `SYNTALIC_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
 | `SYNTALIC_BASE_RPC_URL` | Custom Base RPC for the balances `wallet_info` and `--info` show (default `https://mainnet.base.org`, HTTPS enforced) |
+| `SYNTALIC_PAYMENT_NETWORK` | Pay on one chain only: `solana`, `base` or `tempo` (default: try all, in that order). Any other value stops the server at startup |
+| `SYNTALIC_PAYMENT_TRACE` | `1` writes one stderr line per paid call: the chain that settled, the payer and the transaction |
 
 If both `SYNTALIC_EVM_PRIVATE_KEY` and `SYNTALIC_SOLANA_PRIVATE_KEY` are set, `~/.syntalic/wallet.json` is untouched.
 

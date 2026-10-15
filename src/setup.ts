@@ -141,6 +141,8 @@ export function printHelp() {
 
   Payment: USDC on Solana, USDC on Base, or USDC.e on Tempo.
            Fund any chain — the client auto-selects whichever has balance.
+           SYNTALIC_PAYMENT_NETWORK=solana|base|tempo pays on that chain only.
+           SYNTALIC_SOLANA_RPC_URL sets a dedicated Solana RPC (the public one rate-limits).
 
   Bring your own keys (optional):
     export SYNTALIC_EVM_PRIVATE_KEY=0x...
@@ -353,6 +355,10 @@ export async function runInfo() {
     readEnv("TEMPO_RPC_URL").value ?? "https://rpc.tempo.xyz (default)";
   const baseRpc =
     readEnv("BASE_RPC_URL").value ?? "https://mainnet.base.org (default)";
+  const pinVar = readEnv("PAYMENT_NETWORK");
+  const payment = pinVar.value?.trim()
+    ? `${pinVar.value.trim()} only (${pinVar.name})`
+    : "solana, then base, then tempo (default)";
 
   let addresses: { evm: string; solana: string } | undefined;
   if (envEvm && envSolana) {
@@ -411,6 +417,7 @@ export async function runInfo() {
   console.log("    Solana RPC:     " + solanaRpc);
   console.log("    Base RPC:       " + baseRpc);
   console.log("    Tempo RPC:      " + tempoRpc);
+  console.log("    Payment chain:  " + payment);
   console.log("");
 }
 

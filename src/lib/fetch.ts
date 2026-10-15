@@ -1,6 +1,6 @@
 import { x402Client, x402HTTPClient, decodePaymentResponseHeader } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
-import { registerExactSvmScheme } from "@x402/svm/exact/client";
+import { ExactSvmScheme } from "@x402/svm/exact/client";
 import type { PaymentRequired, PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { privateKeyToAccount } from "viem/accounts";
 import { address as asSolanaAddress, createKeyPairSignerFromBytes } from "@solana/kit";
@@ -32,6 +32,29 @@ const AMBIGUOUS_SOLANA_FAILURE_REASONS = new Set<string>([
 interface FetchConfig {
   evmPrivateKey: string;
   solanaPrivateKey: string;
+}
+
+/** The chains a payment can go out on, in the order they are tried. */
+export const PAYMENT_NETWORKS = ["solana", "base", "tempo"] as const;
+export type PaymentNetwork = (typeof PAYMENT_NETWORKS)[number];
+
+/**
+ * SYNTALIC_PAYMENT_NETWORK pins every payment to one chain (testing a chain, or keeping spend on
+ * the one you funded). Unset or empty means the default order. Anything else is a configuration
+ * mistake, refused at startup rather than silently ignored, because an ignored pin spends on a
+ * chain the user meant to keep out of it.
+ */
+export function parsePaymentNetwork(name: string, raw: string | undefined): PaymentNetwork | undefined {
+  const value = raw?.trim().toLowerCase();
+  if (!value) return undefined;
+  if ((PAYMENT_NETWORKS as readonly string[]).includes(value)) return value as PaymentNetwork;
+  throw new Error(`${name} must be one of ${PAYMENT_NETWORKS.join(", ")} (got "${raw}").`);
+}
+
+function labelOf(network: string): PaymentNetwork | undefined {
+  if (network === SOLANA_NETWORK_ID) return "solana";
+  if (network === BASE_NETWORK_ID) return "base";
+  return undefined;
 }
 
 export interface PaidFetchResult {
@@ -263,9 +286,18 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
     );
   }
 
+  const solanaRpcVar = readEnv("SOLANA_RPC_URL");
+  const solanaRpcUrl = resolveRpcUrl(
+    solanaRpcVar.name,
+    solanaRpcVar.value,
+    DEFAULT_SOLANA_RPC_URL,
+  );
   const client = new x402Client();
   client.register(BASE_NETWORK_ID, new ExactEvmScheme(evmAccount));
-  registerExactSvmScheme(client, { signer, networks: [SOLANA_NETWORK_ID] });
+  // Registered directly rather than through registerExactSvmScheme, which takes no RPC URL: building
+  // a Solana payment reads the mint over RPC, and without this it always used the public mainnet
+  // RPC, so SYNTALIC_SOLANA_RPC_URL covered the balance check but not the payment itself.
+  client.register(SOLANA_NETWORK_ID, new ExactSvmScheme(signer, { rpcUrl: solanaRpcUrl }));
   const httpClient = new x402HTTPClient(client);
 
   // polyfill: false — we call mppx only as a credential factory for Tempo receipts,
@@ -275,20 +307,41 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
     polyfill: false,
   });
 
-  const solanaRpcVar = readEnv("SOLANA_RPC_URL");
-  const solanaRpcUrl = resolveRpcUrl(
-    solanaRpcVar.name,
-    solanaRpcVar.value,
-    DEFAULT_SOLANA_RPC_URL,
-  );
   const tempoRpcVar = readEnv("TEMPO_RPC_URL");
   const tempoRpcUrl = resolveRpcUrl(
     tempoRpcVar.name,
     tempoRpcVar.value,
     DEFAULT_TEMPO_RPC_URL,
   );
+  const pinVar = readEnv("PAYMENT_NETWORK");
+  const pin = parsePaymentNetwork(pinVar.name, pinVar.value);
+  const skipReason = `skipped (${pinVar.name}=${pin})`;
+  // Off by default: one stderr line per paid call, naming the chain that settled, the payer and
+  // the transaction, which is what a "did this call debit the wallet I think it did" check needs.
+  const trace = /^(1|true|yes)$/i.test(readEnv("PAYMENT_TRACE").value?.trim() ?? "");
   const solanaAddress = signer.address;
   const evmAddress = evmAccount.address;
+
+  function traceSettled(url: string, network: string, response: Response): void {
+    if (!trace) return;
+    const path = new URL(url).pathname;
+    let detail = "";
+    const raw = response.headers.get("payment-response") ?? response.headers.get("x-payment-response");
+    if (raw) {
+      try {
+        const settle = decodePaymentResponseHeader(raw);
+        detail = ` payer=${settle.payer ?? "?"} tx=${settle.transaction || "?"}`;
+        if (settle.amount) detail += ` amount=${settle.amount}`;
+      } catch {
+        detail = " (unreadable payment-response header)";
+      }
+    } else if (network === TEMPO_LABEL) {
+      detail = ` payer=${evmAddress}`;
+    } else {
+      detail = " (no payment-response header)";
+    }
+    console.error(`[syntalic-mcp] paid ${path} via ${network}${detail}`);
+  }
 
   type BalanceCheck =
     | { eligible: true; checked: true }
@@ -403,23 +456,41 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
 
     for (const req of paymentRequired.accepts) {
       const network = req.network;
+      const label = labelOf(network);
 
-      if (network === SOLANA_NETWORK_ID) {
+      if (label === undefined) {
+        attempts.push({ network, reason: "unsupported by client" });
+        continue;
+      }
+      if (pin && label !== pin) {
+        attempts.push({ network, reason: skipReason });
+        continue;
+      }
+
+      if (label === "solana") {
         const check = await solanaBalanceCheck(req);
         if (check.checked && !check.eligible) {
           attempts.push({ network, reason: "insufficient balance (pre-check)" });
           continue;
         }
-        if (!check.checked && check.error) {
-          // Proceed with the attempt; record so the final error message
-          // surfaces a misconfigured RPC if every chain ends up failing.
+        if (!check.checked && pin !== "solana") {
+          // Fail closed: a balance we could not read is not a balance we have. The public Solana
+          // RPC rate-limits often, and attempting anyway surfaced as an opaque 429 on the tool
+          // while Base or Tempo had the funds. Fall through to them instead. A Solana pin is the
+          // user saying "pay on Solana", so it still attempts (below), with the reason on stderr.
+          attempts.push({
+            network,
+            reason:
+              `skipped: could not read the Solana balance (${check.error}). ` +
+              `Set ${solanaRpcVar.name} to a dedicated RPC if your funds are on Solana.`,
+          });
+          continue;
+        }
+        if (!check.checked) {
           console.error(
-            `[syntalic-mcp] Solana balance pre-check unavailable (${check.error}); attempting payment.`,
+            `[syntalic-mcp] Solana balance pre-check unavailable (${check.error}); attempting payment (${pinVar.name}=solana).`,
           );
         }
-      } else if (network !== BASE_NETWORK_ID) {
-        attempts.push({ network, reason: "unsupported by client" });
-        continue;
       }
 
       const { response, failure, networkError } = await attemptX402Payment(
@@ -429,7 +500,10 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
         baseFetch,
       );
 
-      if (response.ok) return response;
+      if (response.ok) {
+        traceSettled(savedRequest.url, network, response);
+        return response;
+      }
 
       if (networkError) {
         attempts.push({ network, reason: `network error: ${networkError}` });
@@ -478,7 +552,9 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
     }
 
     const tempoResult = findTempoChargeChallenge(firstResponse);
-    if (!tempoResult.ok) {
+    if (pin && pin !== "tempo") {
+      if (tempoResult.ok && tempoResult.value) attempts.push({ network: TEMPO_LABEL, reason: skipReason });
+    } else if (!tempoResult.ok) {
       attempts.push({
         network: TEMPO_LABEL,
         reason: `failed to parse tempo challenge: ${tempoResult.error}`,
@@ -499,7 +575,10 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
         }
         try {
           const response = await attemptTempoPayment(firstResponse, savedRequest, baseFetch);
-          if (response.ok) return response;
+          if (response.ok) {
+            traceSettled(savedRequest.url, TEMPO_LABEL, response);
+            return response;
+          }
           const reason = await extractTempoFailureReason(response);
           attempts.push({ network: TEMPO_LABEL, reason: `tempo payment failed: ${reason}` });
         } catch (err) {
