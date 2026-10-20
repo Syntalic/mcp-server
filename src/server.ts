@@ -343,7 +343,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
     "ontology_resolve",
     "Costs $0.01 per request (a malformed request is refused before anything is billed; no key needed). Use when a question names a " +
       "brand, category, product type, retailer or product: it turns each name into ids. One " +
-      "concept per term (\"protein bars\", \"gerber\"); \"woman-owned candy\" is two terms. EVERY thing a " +
+      "concept per term (\"protein bars\", \"gerber\"); \"olipop soda\" is two terms. EVERY thing a " +
       "term can name comes back and none is ranked best: a name that fits two shelves or two " +
       "brands returns both as co-equals (`co_equal`), so never pick one silently: run each, or " +
       "ask. Each match carries an `id`, the `key` of a category, and coverage counts. A term " +
