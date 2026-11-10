@@ -61,8 +61,8 @@ if (rawApiBase !== DEFAULT_API_BASE) {
 }
 const apiBase = rawApiBase;
 const apiKey = readEnv("API_KEY").value;
-// SYNTALIC_TOOLS=measures offers one paid tool per measure in place of one per route (src/measures.ts).
-// Anything else, or unset, keeps the per-route tools.
+// SYNTALIC_TOOLS=measures offers one paid tool per measure, named measure_<name>,
+// in place of one per route (src/measures.ts). Anything else, or unset, keeps the per-route tools.
 const toolsVar = readEnv("TOOLS");
 const toolsMode = (toolsVar.value ?? "").trim().toLowerCase();
 if (toolsMode && toolsMode !== "routes" && toolsMode !== "measures") {

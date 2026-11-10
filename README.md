@@ -196,36 +196,40 @@ tools and `wallet_info` stay. A measure is a metric family; `by` picks how the a
 measures reach every paid route, including six the per-route tools do not (`product-share`,
 `product-names`, `brand-signals`, `emerging-brands`, `tactics` and the ontology's `similar`).
 
+The tool name is `measure_` plus the measure, so a call to `prices` or to a route the playbooks
+name (`price_positioning`, `ontology_resolve`) is not a tool. The route is a split, named in square
+brackets in that measure's description. `SYNTALIC_TOOLS` unset, or `routes`, keeps the per-route tools.
+
 | Tool | Cost | `by` (default first) |
 |------|------|----------------------|
-| `offers` | $0.01 | `retailer` |
-| `prices` | $0.01 to $0.02 | `summary`, `distribution`, `band`, `brand`, `product`, `retailer` |
-| `trend` | $0.01 to $0.02 | `period` (a product, a shelf or a brand), `drop`, `product` |
-| `promotions` | $0.01 | `brand`, `retailer`, `product` |
-| `assortment` | $0.01 to $0.02 | `brand`, `concentration`, `category`, `retailer`, `availability` |
-| `attention` | $0.03 | `brand`, `product`, `category`, `creator`, `product_type`, `topic`, `momentum`, `emerging`, `week` |
-| `signals` | $0.03 | `brand`, `product_name`, `practice` |
-| `scout` | $0.05 | `gap`, `launch` |
-| `resolve` | $0.01 | `name`, `browse_node`, `gpc_browse_nodes`, `gpc_attributes` |
-| `neighbors` | $0.01 | `relations`, `similar` |
-| `coverage` | $0.01 | `evidence` |
+| `measure_offers` | $0.01 | `retailer` |
+| `measure_prices` | $0.01 to $0.02 | `summary`, `distribution`, `band`, `brand`, `product`, `retailer` |
+| `measure_trend` | $0.01 to $0.02 | `period` (a product, a shelf or a brand), `drop`, `product` |
+| `measure_promotions` | $0.01 | `brand`, `retailer`, `product` |
+| `measure_assortment` | $0.01 to $0.02 | `brand`, `concentration`, `category`, `retailer`, `availability` |
+| `measure_attention` | $0.03 | `brand`, `product`, `category`, `creator`, `product_type`, `topic`, `momentum`, `emerging`, `week` |
+| `measure_signals` | $0.03 | `brand`, `product_name`, `practice` |
+| `measure_scout` | $0.05 | `gap`, `launch` |
+| `measure_resolve` | $0.01 | `name`, `browse_node`, `gpc_browse_nodes`, `gpc_attributes` |
+| `measure_neighbors` | $0.01 | `relations`, `similar` |
+| `measure_coverage` | $0.01 | `evidence` |
 
 ```
-prices     { subject: "spt:fb-2-17-2-4", by: "distribution" }
-trend      { subject: "brand:b_ac1a1c7143cb2199" }
-promotions { subject: "grocery", by: "retailer" }
+measure_prices     { subject: "spt:fb-2-17-2-4", by: "distribution" }
+measure_trend      { subject: "brand:b_ac1a1c7143cb2199" }
+measure_promotions { subject: "grocery", by: "retailer" }
 ```
 
-- `subject` is an id from `resolve` (`spt:`, `gpc:`, `brand:`, `retailer:`, `entity:`) or a name. It is
+- `subject` is an id from `measure_resolve` (`spt:`, `gpc:`, `brand:`, `retailer:`, `entity:`) or a name. It is
   sent to the route as the parameter of its kind. Every other argument is the route's own.
 - The server translates the call and calls the route itself, so the tools work against any deployment of
   the API and a call costs what the route costs. The API's own `/v1/measures/*` paths are not used.
 - A `by` the measure does not have, a subject the split cannot take, or a `by` that could be about two
   things with nothing to say which, is refused by the server before any request is made.
 - 17 tools in place of 40, and a tool list about 35% smaller (32k characters against 49k).
-- The playbook prompts name the per-route tools (`price_positioning`). In this mode each measure's
-  description names the route beside its split, so the name can still be found; the playbooks themselves
-  are not rewritten yet.
+- The playbook prompts name the per-route tools (`price_positioning`). In this mode that name is a
+  split of `measure_prices`, written in square brackets in the description. The playbooks themselves
+  are not rewritten. Call `measure_prices`, not `price_positioning` and not `prices`.
 
 ## Parameters
 
