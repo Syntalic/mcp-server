@@ -188,6 +188,45 @@ The only routes that bind both corpora to one category axis and one brand key.
 |------|-------------|
 | `wallet_info` | Show your wallet addresses, their live balance on each chain, and funding instructions |
 
+## Measure tools (opt-in)
+
+Set `SYNTALIC_TOOLS=measures` and the paid tools above are replaced by 11, one per measure. The free
+tools and `wallet_info` stay. A measure is a metric family; `by` picks how the answer is split and
+`subject` says what it is about. Each split is one API route, so nothing is lost: between them the
+measures reach every paid route, including six the per-route tools do not (`product-share`,
+`product-names`, `brand-signals`, `emerging-brands`, `tactics` and the ontology's `similar`).
+
+| Tool | Cost | `by` (default first) |
+|------|------|----------------------|
+| `offers` | $0.01 | `retailer` |
+| `prices` | $0.01 to $0.02 | `summary`, `distribution`, `band`, `brand`, `product`, `retailer` |
+| `trend` | $0.01 to $0.02 | `period` (a product, a shelf or a brand), `drop`, `product` |
+| `promotions` | $0.01 | `brand`, `retailer`, `product` |
+| `assortment` | $0.01 to $0.02 | `brand`, `concentration`, `category`, `retailer`, `availability` |
+| `attention` | $0.03 | `brand`, `product`, `category`, `creator`, `product_type`, `topic`, `momentum`, `emerging`, `week` |
+| `signals` | $0.03 | `brand`, `product_name`, `practice` |
+| `scout` | $0.05 | `gap`, `launch` |
+| `resolve` | $0.01 | `name`, `browse_node`, `gpc_browse_nodes`, `gpc_attributes` |
+| `neighbors` | $0.01 | `relations`, `similar` |
+| `coverage` | $0.01 | `evidence` |
+
+```
+prices     { subject: "spt:fb-2-17-2-4", by: "distribution" }
+trend      { subject: "brand:b_ac1a1c7143cb2199" }
+promotions { subject: "grocery", by: "retailer" }
+```
+
+- `subject` is an id from `resolve` (`spt:`, `gpc:`, `brand:`, `retailer:`, `entity:`) or a name. It is
+  sent to the route as the parameter of its kind. Every other argument is the route's own.
+- The server translates the call and calls the route itself, so the tools work against any deployment of
+  the API and a call costs what the route costs. The API's own `/v1/measures/*` paths are not used.
+- A `by` the measure does not have, a subject the split cannot take, or a `by` that could be about two
+  things with nothing to say which, is refused by the server before any request is made.
+- 17 tools in place of 40, and a tool list about 35% smaller (32k characters against 49k).
+- The playbook prompts name the per-route tools (`price_positioning`). In this mode each measure's
+  description names the route beside its split, so the name can still be found; the playbooks themselves
+  are not rewritten yet.
+
 ## Parameters
 
 All tools accept optional parameters:
@@ -249,6 +288,7 @@ All env vars are optional — a wallet is auto-generated on first run.
 | `SYNTALIC_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
 | `SYNTALIC_BASE_RPC_URL` | Custom Base RPC for the balances `wallet_info` and `--info` show (default `https://mainnet.base.org`, HTTPS enforced) |
 | `SYNTALIC_PAYMENT_NETWORK` | Pay on one chain only: `solana`, `base` or `tempo` (default: try all, in that order). Any other value stops the server at startup |
+| `SYNTALIC_TOOLS` | `measures` offers one paid tool per measure in place of one per route (see Measure tools). `routes` or unset keeps the per-route tools. Any other value stops the server at startup |
 | `SYNTALIC_PAYMENT_TRACE` | `1` writes one stderr line per paid call: the chain that settled, the payer and the transaction |
 
 If both `SYNTALIC_EVM_PRIVATE_KEY` and `SYNTALIC_SOLANA_PRIVATE_KEY` are set, `~/.syntalic/wallet.json` is untouched.
@@ -316,6 +356,11 @@ unreachable from any agent.
 - `src/server-ontology.test.ts` drives the server through a real client over an
   in-memory transport, against a stubbed `fetch`: what the ontology tools send, the
   id parameters on the paid tools, the annotations, the prompts and the resources.
+- `src/measures.generated.ts` is vendored from the Syntalic repository
+  (`shared/measures/mcp/measures.generated.ts`; `npx tsx scripts/export-measures.ts` in `api/` renders it
+  from the API's measure registry and its OpenAPI document; copy it here). Do not edit it.
+  `src/server-measures.test.ts` holds the measure tools to it: every paid path `server.ts` calls has a
+  split, and a call reaches the route its split names.
 - `src/playbooks.generated.ts` is vendored from `shared/playbooks` in the Syntalic
   repository (`node shared/playbooks/sync.mjs` renders it; copy it here). Do not
   edit it in this repository.

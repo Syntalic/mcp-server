@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createPaidFetch, PaymentError } from "./lib/fetch.js";
 import { formatBalances, readBalances } from "./lib/balances.js";
 import { registerGuidance, SERVER_INSTRUCTIONS } from "./guidance.js";
+import { MEASURE_INSTRUCTIONS, registerMeasureTools } from "./measures.js";
 import {
   countrySchema,
   retailerSchema,
@@ -67,6 +68,9 @@ export interface ServerConfig {
   apiKey?: string;
   /** True if the user has run --setup at least once to view their keys. */
   backupAcknowledged?: boolean;
+  /** Which paid tools to offer. "routes" (the default): one tool per API route. "measures": one tool per
+   *  measure (src/measures.ts), each reaching the same routes through `by`. The free tools are in both. */
+  tools?: "routes" | "measures";
 }
 
 export async function createServer(config: ServerConfig): Promise<McpServer> {
@@ -75,8 +79,17 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       name: "syntalic-pricing-intelligence",
       version: VERSION,
     },
-    { instructions: SERVER_INSTRUCTIONS },
+    { instructions: config.tools === "measures" ? MEASURE_INSTRUCTIONS : SERVER_INSTRUCTIONS },
   );
+
+  // With the measure tools on, the per-route paid tools below are not registered: the measures reach the
+  // same routes, and offering both would double the list a model reads on every turn. The registrations
+  // stay as they are (the parity checks read this file); only the free tools get through.
+  if (config.tools === "measures") {
+    const register = server.tool.bind(server) as (...args: unknown[]) => unknown;
+    (server as unknown as { tool: (...args: unknown[]) => unknown }).tool = (...args: unknown[]) =>
+      FREE_TOOLS.has(String(args[0])) ? register(...args) : undefined;
+  }
 
   // createPaidFetch validates both keys (throws a helpful error on malformed input)
   // and returns the derived addresses, so we don't redo the parsing here.
@@ -1114,6 +1127,12 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         limit: limit?.toString(),
       }),
   );
+
+  if (config.tools === "measures") {
+    // Past the filter above: registered on the prototype's own method.
+    delete (server as unknown as { tool?: unknown }).tool;
+    registerMeasureTools(server, query, annotationsFor);
+  }
 
   // Prompts (the playbooks) and resources (the rules, the playbook index): guidance an agent can
   // pull, rendered from the same sources Eve reads (shared/playbooks in the Syntalic repo).
