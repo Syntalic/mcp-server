@@ -158,10 +158,15 @@ export function translate(
           ` ${FREE}`,
       };
     }
-    if (params[target.param] !== undefined) {
-      return { ok: false, message: `Send subject or ${target.param}, not both: they name the same thing here. ${FREE}` };
+    const value = target.as === "value" && id ? id.value : subject;
+    // The same thing said twice is not a contradiction: models often send the
+    // subject and repeat it in the route's own parameter. Two different
+    // values are, and nothing is picked between them.
+    const theirs = params[target.param];
+    if (theirs !== undefined && (Array.isArray(theirs) ? theirs.some((v) => v !== value) : theirs !== value)) {
+      return { ok: false, message: `subject and ${target.param} name different things. Send one of them. ${FREE}` };
     }
-    params[target.param] = target.as === "value" && id ? id.value : subject;
+    if (theirs === undefined) params[target.param] = value;
   }
 
   for (const [name, value] of Object.entries(split.fixed ?? {})) {

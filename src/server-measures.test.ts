@@ -238,8 +238,16 @@ describe("translate", () => {
   it("refuses an unknown by, a subject the split cannot take, and a subject beside its parameter", () => {
     assert.match(refused("prices", { by: "tier" }), /summary, distribution, band, brand, product, retailer/);
     assert.match(refused("prices", { by: "band", subject: "gpc:10008059" }), /does not take a gpc id/);
-    assert.match(refused("prices", { subject: "spt:fb-1", spt: "spt:fb-2" }), /subject or spt, not both/);
+    assert.match(refused("prices", { subject: "spt:fb-1", spt: "spt:fb-2" }), /subject and spt name different things/);
     assert.match(refused("promotions", { by: "brand", subject: "grocery", aggregate_by: "retailer" }), /fixes aggregate_by=brand/);
+  });
+
+  it("takes a subject repeated in the route's own parameter, when the two agree", () => {
+    // What a model often sends; it is the same request as either alone.
+    assert.deepEqual(to("assortment", { subject: "spt:el", spt: "spt:el" }).params, { spt: "spt:el" });
+    assert.deepEqual(to("prices", { by: "distribution", subject: "electronics", category: "electronics" }).params, {
+      category: "electronics",
+    });
   });
 
   it("reads an id the way the API does", () => {
