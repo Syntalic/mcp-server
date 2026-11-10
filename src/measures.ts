@@ -11,7 +11,10 @@
 // its own /v1/measures paths, and a call costs what the route costs.
 //
 // Off by default: SYNTALIC_TOOLS=measures swaps the per-route paid tools for
-// these (index.ts). The free catalog tools and wallet_info stay either way.
+// these (index.ts). Each tool is registered as measure_<name>, so a call to
+// the bare name or to a route the playbooks name does not hit a measure.
+// The free catalog tools and wallet_info stay either way. Unset keeps the
+// per-route tools.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -202,9 +205,17 @@ function priceRange(measure: MeasureDef): string {
   return prices.length === 1 ? `$${prices[0]}` : `$${prices[0]} to $${prices[prices.length - 1]}`;
 }
 
+/** The name the server registers. A bare measure name (`prices`, `resolve`) is
+ *  what a model calls when a playbook said a route (`price_positioning`,
+ *  `ontology_resolve`) and the two vocabularies get mixed. The prefix keeps
+ *  the measure tools from answering that call. */
+export function measureToolName(name: string): string {
+  return `measure_${name}`;
+}
+
 /** What the model reads to pick the tool and the split. The route's last
  *  segment is named beside each split: the playbooks and earlier versions of
- *  this server call the routes by it. */
+ *  this server call the routes by it. That segment is not a tool name. */
 export function describeMeasure(measure: MeasureDef): string {
   const mixed = new Set(measure.splits.map((s) => s.price_usd)).size > 1;
   const splits = measure.splits.map((s) => {
@@ -213,10 +224,12 @@ export function describeMeasure(measure: MeasureDef): string {
     const price = mixed ? `, $${s.price_usd}` : "";
     return `${s.by}${about}${tag}: ${s.answers} [${s.route.split("/").pop()}${price}]`;
   });
+  const tool = measureToolName(measure.name);
   return (
-    `${measure.summary} Costs ${priceRange(measure)} per call. ` +
+    `${measure.summary} Costs ${priceRange(measure)} per call. Call ${tool}. ` +
+    `\`${measure.name}\` and the names in square brackets are not tools. ` +
     `\`by\` picks the split. ${splits.join("; ")}. ` +
-    "`subject` is what it is about: an id from resolve (spt:, gpc:, brand:, retailer:, entity:) or a name. " +
+    `\`subject\` is what it is about: an id from ${measureToolName("resolve")} (spt:, gpc:, brand:, retailer:, entity:) or a name. ` +
     "A split that cannot take the subject is refused before anything is billed, with what it takes."
   );
 }
@@ -224,16 +237,17 @@ export function describeMeasure(measure: MeasureDef): string {
 /** What a client is told at connection when the measure tools are on. */
 export const MEASURE_INSTRUCTIONS =
   "Syntalic prices, brands and shelves. Free: wallet_info and the catalog discovery tools. Every other tool is a " +
-  "measure, and states its cost in its description: offers, prices, trend, promotions, assortment (the shelf), " +
-  "attention, signals (social), scout (social against shelf), and resolve, neighbors, coverage (names to ids, what " +
-  "sits next to an id, the evidence behind it). Each takes `by` (how the answer is split) and `subject` (what it is " +
-  "about). When a question names a brand, category, product type, retailer or product, call resolve once per " +
-  "conversation (one concept per term) and use the ids it returns as `subject`. A name that fits several things " +
-  "returns all of them as co-equals: never pick one silently. Say 'not seen at X' only when X is in " +
-  "retailers_scanned. A malformed request is refused before anything is billed. " +
-  "The playbook prompts and the resources syntalic://ontology/rules and syntalic://ontology/metrics name tools by " +
-  "their route (price_positioning, ontology_resolve): each is a split of a measure, named in square brackets in that " +
-  "measure's description.";
+  "measure, and its name starts with measure_: measure_offers, measure_prices, measure_trend, measure_promotions, " +
+  "measure_assortment (the shelf), measure_attention, measure_signals (social), measure_scout (social against shelf), " +
+  "and measure_resolve, measure_neighbors, measure_coverage (names to ids, what sits next to an id, the evidence " +
+  "behind it). Call those names. The bare names (offers, prices, resolve) are not tools. Each states its cost in " +
+  "its description and takes `by` (how the answer is split) and `subject` (what it is about). When a question names " +
+  "a brand, category, product type, retailer or product, call measure_resolve once per conversation (one concept " +
+  "per term) and use the ids it returns as `subject`. A name that fits several things returns all of them as " +
+  "co-equals: never pick one silently. Say 'not seen at X' only when X is in retailers_scanned. A malformed " +
+  "request is refused before anything is billed. The playbook prompts and the resources syntalic://ontology/rules " +
+  "and syntalic://ontology/metrics name tools by their route (price_positioning, ontology_resolve). Those are not " +
+  "tools in this mode: each is a split of a measure, named in square brackets in that measure's description.";
 
 export type MeasureQuery = (
   path: string,
@@ -260,7 +274,8 @@ export function registerMeasureTools(
       if (p.name in shape) continue;
       shape[p.name] = paramSchema(p);
     }
-    server.tool(measure.name, describeMeasure(measure), shape, annotations(measure.name), async (args) => {
+    const tool = measureToolName(measure.name);
+    server.tool(tool, describeMeasure(measure), shape, annotations(tool), async (args) => {
       const out = translate(measure, args as Record<string, unknown>);
       if (!out.ok) return { content: [{ type: "text" as const, text: out.message }], isError: true };
       return query(out.route, out.params, { compact: true });

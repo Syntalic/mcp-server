@@ -10,7 +10,7 @@ import { generatePrivateKey } from "viem/accounts";
 import { base58 } from "@scure/base";
 import { createServer } from "./server.js";
 import { MEASURES } from "./measures.generated.js";
-import { describeMeasure, parseId, translate } from "./measures.js";
+import { describeMeasure, measureToolName, parseId, translate } from "./measures.js";
 
 const API_BASE = "https://api.test";
 const FREE = ["wallet_info", "catalog_overview", "browse_categories", "list_retailers", "list_brands", "coverage_map"];
@@ -54,7 +54,7 @@ async function connect(tools?: "routes" | "measures"): Promise<Client> {
 }
 
 async function call(client: Client, name: string, args: Record<string, unknown>) {
-  const res = (await client.callTool({ name, arguments: args })) as {
+  const res = (await client.callTool({ name: measureToolName(name), arguments: args })) as {
     isError?: boolean;
     content: { type: string; text: string }[];
   };
@@ -75,12 +75,16 @@ describe("the tool list", () => {
     const registered = [...src().matchAll(/server\.tool\(\s*"([a-z_]+)"/g)].map((m) => m[1]!);
     assert.ok(registered.length > 30, `only ${registered.length} tools found in server.ts`);
     assert.deepEqual([...names].sort(), [...registered].sort());
-    for (const m of MEASURES) assert.ok(!names.includes(m.name), `${m.name} is listed by default`);
+    for (const m of MEASURES) {
+      assert.ok(!names.includes(m.name), `${m.name} is listed by default`);
+      assert.ok(!names.includes(measureToolName(m.name)), `${measureToolName(m.name)} is listed by default`);
+    }
   });
 
-  it("with measures on, is the free tools and one tool per measure", async () => {
+  it("with measures on, is the free tools and one prefixed tool per measure", async () => {
     const names = (await (await connect("measures")).listTools()).tools.map((t) => t.name);
-    assert.deepEqual(names.sort(), [...FREE, ...MEASURES.map((m) => m.name)].sort());
+    assert.deepEqual(names.sort(), [...FREE, ...MEASURES.map((m) => measureToolName(m.name))].sort());
+    for (const m of MEASURES) assert.ok(!names.includes(m.name), `${m.name} is registered bare`);
   });
 
   it("is at least 30% smaller, measured as the JSON a client is sent", async () => {
@@ -95,7 +99,7 @@ describe("the tool list", () => {
   it("states each measure's cost, and marks it as spending", async () => {
     const tools = (await (await connect("measures")).listTools()).tools;
     for (const m of MEASURES) {
-      const tool = tools.find((t) => t.name === m.name)!;
+      const tool = tools.find((t) => t.name === measureToolName(m.name))!;
       assert.match(tool.description ?? "", /Costs \$0\.0\d/, m.name);
       assert.equal(tool.annotations?.readOnlyHint, false, m.name);
       const props = Object.keys((tool.inputSchema.properties ?? {}) as object);
@@ -105,7 +109,10 @@ describe("the tool list", () => {
   });
 
   it("tells the client about the measures in its instructions", async () => {
-    assert.match((await connect("measures")).getInstructions() ?? "", /Every other tool is a\s+measure/);
+    const instructions = (await connect("measures")).getInstructions() ?? "";
+    assert.match(instructions, /Every other tool is a\s+measure/);
+    assert.match(instructions, /measure_resolve/);
+    assert.match(instructions, /The bare names \(offers, prices, resolve\) are not tools/);
     assert.match((await connect()).getInstructions() ?? "", /ontology_resolve/);
   });
 });
@@ -172,12 +179,12 @@ describe("a measure call goes to the route its split names", () => {
     assert.equal(seen[0]!.pathname, "/v1/analyst/price-change-leaders");
     assert.equal(seen[0]!.searchParams.get("win"), "30");
     seen = [];
-    const bad = await client.callTool({ name: "trend", arguments: { subject: "spt:fb-2-17-2-4", by: "product", win: 45 } }).then(
+    const bad = await client.callTool({ name: measureToolName("trend"), arguments: { subject: "spt:fb-2-17-2-4", by: "product", win: 45 } }).then(
       (r) => (r as { isError?: boolean }).isError === true,
       () => true,
     );
     assert.equal(bad, true);
-    const tooMany = await client.callTool({ name: "offers", arguments: { subject: "airpods", limit: 100000 } }).then(
+    const tooMany = await client.callTool({ name: measureToolName("offers"), arguments: { subject: "airpods", limit: 100000 } }).then(
       (r) => (r as { isError?: boolean }).isError === true,
       () => true,
     );
@@ -249,8 +256,11 @@ describe("translate", () => {
     assert.equal(parseId("gpc:123"), null);
   });
 
-  it("names each split's route in the description, so a playbook's tool name can be found", () => {
+  it("names each split's route in the description, and registers the measure under a prefix", () => {
+    assert.match(describeMeasure(measure("prices")), /Call measure_prices/);
     assert.match(describeMeasure(measure("prices")), /\[price-positioning, \$0\.01\]/);
+    assert.match(describeMeasure(measure("scout")), /Call measure_scout/);
     assert.match(describeMeasure(measure("scout")), /\[launch-buzz\]/);
+    assert.equal(measureToolName("prices"), "measure_prices");
   });
 });
