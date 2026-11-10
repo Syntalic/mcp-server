@@ -61,6 +61,15 @@ if (rawApiBase !== DEFAULT_API_BASE) {
 }
 const apiBase = rawApiBase;
 const apiKey = readEnv("API_KEY").value;
+// SYNTALIC_TOOLS=measures offers one paid tool per measure in place of one per route (src/measures.ts).
+// Anything else, or unset, keeps the per-route tools.
+const toolsVar = readEnv("TOOLS");
+const toolsMode = (toolsVar.value ?? "").trim().toLowerCase();
+if (toolsMode && toolsMode !== "routes" && toolsMode !== "measures") {
+  console.error(`${toolsVar.name} must be "routes" or "measures" (got "${toolsVar.value}").`);
+  process.exit(1);
+}
+const tools: "routes" | "measures" = toolsMode === "measures" ? "measures" : "routes";
 
 // Env vars are supported as overrides for advanced users (CI, shared secrets,
 // read-only home dirs). If both are provided, we skip the wallet file entirely.
@@ -146,6 +155,7 @@ const server = await createServer({
   solanaPrivateKey,
   apiKey,
   backupAcknowledged,
+  tools,
 });
 const transport = new StdioServerTransport();
 await server.connect(transport);
