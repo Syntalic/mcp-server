@@ -10,7 +10,9 @@ export interface MeasureParam {
   type: "string" | "integer" | "number" | "boolean";
   /** The parameter repeats (term=a&term=b). */
   array?: true;
-  enum?: string[];
+  enum?: (string | number)[];
+  minimum?: number;
+  maximum?: number;
   description: string;
 }
 
@@ -30,6 +32,10 @@ export interface MeasureSplit {
   name?: string;
   /** Parameters the split fixes. */
   fixed?: Record<string, string>;
+  /** The parameters the route reads. */
+  params: string[];
+  /** The route has its own `subject` parameter, read beside `subject_kind`. */
+  own_subject?: true;
 }
 
 export interface MeasureDef {
@@ -62,7 +68,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "q"
+        "name": "q",
+        "params": [
+          "q",
+          "product_uid",
+          "entity_uid",
+          "country",
+          "retailer",
+          "limit",
+          "strict",
+          "retailer_id"
+        ]
       }
     ],
     "params": [
@@ -93,23 +109,13 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "retailer",
         "type": "string",
-        "enum": [
-          "amazon",
-          "walmart",
-          "target",
-          "bestbuy",
-          "homedepot",
-          "costco",
-          "ikea",
-          "samsclub",
-          "cvs",
-          "dillards"
-        ],
         "description": "Filter to a specific retailer platform (long-tail specialty stores are also present; any platform key is accepted)"
       },
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
         "description": "Max results to return (default 10, min 1, max 50)"
       },
       {
@@ -148,7 +154,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "include_homes",
+          "department",
+          "country",
+          "retailer",
+          "spt",
+          "gpc",
+          "retailer_id"
+        ]
       },
       {
         "by": "distribution",
@@ -169,7 +185,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "include_homes",
+          "department",
+          "country",
+          "retailer",
+          "spt",
+          "gpc",
+          "retailer_id"
+        ]
       },
       {
         "by": "band",
@@ -186,7 +212,15 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "node"
+        "name": "node",
+        "params": [
+          "node",
+          "include_homes",
+          "category",
+          "brand",
+          "spt",
+          "brand_id"
+        ]
       },
       {
         "by": "brand",
@@ -211,7 +245,18 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "brand",
+          "country",
+          "category",
+          "include_homes",
+          "retailer",
+          "spt",
+          "gpc",
+          "brand_id",
+          "retailer_id"
+        ]
       },
       {
         "by": "product",
@@ -232,7 +277,19 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "include_homes",
+          "country",
+          "retailer",
+          "sort_by",
+          "cursor",
+          "limit",
+          "spt",
+          "gpc",
+          "retailer_id"
+        ]
       },
       {
         "by": "retailer",
@@ -253,7 +310,20 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "retailer",
+          "country",
+          "category",
+          "include_homes",
+          "department",
+          "time_window",
+          "from",
+          "to",
+          "spt",
+          "gpc",
+          "retailer_id"
+        ]
       }
     ],
     "params": [
@@ -284,18 +354,6 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "retailer",
         "type": "string",
-        "enum": [
-          "amazon",
-          "walmart",
-          "target",
-          "bestbuy",
-          "homedepot",
-          "costco",
-          "ikea",
-          "samsclub",
-          "cvs",
-          "dillards"
-        ],
         "description": "Filter to a specific retailer platform (long-tail specialty stores are also present; any platform key is accepted)"
       },
       {
@@ -342,11 +400,14 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "cursor",
         "type": "integer",
+        "minimum": 0,
         "description": "Pagination cursor — pass the previous response's next_cursor"
       },
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
         "description": "Max results to return (default 20, min 1, max 50)"
       },
       {
@@ -397,7 +458,19 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "q"
+        "name": "q",
+        "params": [
+          "q",
+          "product_uid",
+          "entity_uid",
+          "country",
+          "retailer",
+          "time_window",
+          "from",
+          "to",
+          "win",
+          "retailer_id"
+        ]
       },
       {
         "by": "period",
@@ -418,7 +491,21 @@ export const MEASURES: MeasureDef[] = [
             "param": "retailer_id",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "category",
+          "include_homes",
+          "department",
+          "country",
+          "retailer",
+          "time_window",
+          "from",
+          "to",
+          "granularity",
+          "spt",
+          "gpc",
+          "retailer_id"
+        ]
       },
       {
         "by": "period",
@@ -435,7 +522,17 @@ export const MEASURES: MeasureDef[] = [
             "param": "retailer_id",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "brand",
+          "country",
+          "retailer",
+          "time_window",
+          "from",
+          "to",
+          "brand_id",
+          "retailer_id"
+        ]
       },
       {
         "by": "drop",
@@ -452,7 +549,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "q"
+        "name": "q",
+        "params": [
+          "q",
+          "product_uid",
+          "entity_uid",
+          "country",
+          "retailer",
+          "time_window",
+          "lookback_days",
+          "retailer_id"
+        ]
       },
       {
         "by": "product",
@@ -473,7 +580,18 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "include_homes",
+          "brand",
+          "country",
+          "win",
+          "limit",
+          "spt",
+          "gpc",
+          "brand_id"
+        ]
       }
     ],
     "params": [
@@ -504,18 +622,6 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "retailer",
         "type": "string",
-        "enum": [
-          "amazon",
-          "walmart",
-          "target",
-          "bestbuy",
-          "homedepot",
-          "costco",
-          "ikea",
-          "samsclub",
-          "cvs",
-          "dillards"
-        ],
         "description": "Filter to a specific retailer platform (long-tail specialty stores are also present; any platform key is accepted)"
       },
       {
@@ -547,9 +653,9 @@ export const MEASURES: MeasureDef[] = [
         "name": "win",
         "type": "integer",
         "enum": [
-          "7",
-          "30",
-          "90"
+          7,
+          30,
+          90
         ],
         "description": "Window in days for series_summary.change_pct."
       },
@@ -606,11 +712,14 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "lookback_days",
         "type": "integer",
+        "minimum": 1,
         "description": "Days to look back for price drops (default 30)."
       },
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
         "description": "Max results to return (default 15, min 1, max 100)"
       }
     ]
@@ -646,7 +755,22 @@ export const MEASURES: MeasureDef[] = [
         "name": "category",
         "fixed": {
           "aggregate_by": "brand"
-        }
+        },
+        "params": [
+          "category",
+          "include_homes",
+          "country",
+          "retailer",
+          "brand",
+          "aggregate_by",
+          "time_window",
+          "from",
+          "to",
+          "spt",
+          "gpc",
+          "brand_id",
+          "retailer_id"
+        ]
       },
       {
         "by": "retailer",
@@ -674,7 +798,22 @@ export const MEASURES: MeasureDef[] = [
         "name": "category",
         "fixed": {
           "aggregate_by": "retailer"
-        }
+        },
+        "params": [
+          "category",
+          "include_homes",
+          "country",
+          "retailer",
+          "brand",
+          "aggregate_by",
+          "time_window",
+          "from",
+          "to",
+          "spt",
+          "gpc",
+          "brand_id",
+          "retailer_id"
+        ]
       },
       {
         "by": "product",
@@ -699,7 +838,20 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "brand",
+          "category",
+          "include_homes",
+          "country",
+          "retailer",
+          "min_discount_pct",
+          "limit",
+          "spt",
+          "gpc",
+          "brand_id",
+          "retailer_id"
+        ]
       }
     ],
     "params": [
@@ -725,18 +877,6 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "retailer",
         "type": "string",
-        "enum": [
-          "amazon",
-          "walmart",
-          "target",
-          "bestbuy",
-          "homedepot",
-          "costco",
-          "ikea",
-          "samsclub",
-          "cvs",
-          "dillards"
-        ],
         "description": "Filter to a specific retailer platform (long-tail specialty stores are also present; any platform key is accepted)"
       },
       {
@@ -806,6 +946,8 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
         "description": "Max results to return (default 20, min 1, max 50)"
       }
     ]
@@ -834,7 +976,16 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "include_homes",
+          "country",
+          "retailer",
+          "spt",
+          "gpc",
+          "retailer_id"
+        ]
       },
       {
         "by": "concentration",
@@ -851,7 +1002,14 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "include_homes",
+          "country",
+          "spt",
+          "gpc"
+        ]
       },
       {
         "by": "category",
@@ -864,7 +1022,12 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "brand"
+        "name": "brand",
+        "params": [
+          "brand",
+          "country",
+          "brand_id"
+        ]
       },
       {
         "by": "retailer",
@@ -884,7 +1047,16 @@ export const MEASURES: MeasureDef[] = [
             "param": "brand_id",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "brand",
+          "category",
+          "include_homes",
+          "country",
+          "spt",
+          "gpc",
+          "brand_id"
+        ]
       },
       {
         "by": "availability",
@@ -905,7 +1077,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "include_homes",
+          "brand",
+          "country",
+          "aggregate_by",
+          "spt",
+          "gpc",
+          "brand_id"
+        ]
       }
     ],
     "params": [
@@ -931,18 +1113,6 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "retailer",
         "type": "string",
-        "enum": [
-          "amazon",
-          "walmart",
-          "target",
-          "bestbuy",
-          "homedepot",
-          "costco",
-          "ikea",
-          "samsclub",
-          "cvs",
-          "dillards"
-        ],
         "description": "Filter to a specific retailer platform (long-tail specialty stores are also present; any platform key is accepted)"
       },
       {
@@ -1001,7 +1171,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "brand",
+          "limit",
+          "spt",
+          "brand_id"
+        ]
       },
       {
         "by": "product",
@@ -1018,7 +1198,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "brand",
+          "limit",
+          "spt",
+          "brand_id"
+        ]
       },
       {
         "by": "category",
@@ -1031,7 +1221,15 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "limit",
+          "spt"
+        ]
       },
       {
         "by": "creator",
@@ -1048,7 +1246,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "brand",
+          "limit",
+          "spt",
+          "brand_id"
+        ]
       },
       {
         "by": "product_type",
@@ -1061,7 +1269,15 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "limit",
+          "spt"
+        ]
       },
       {
         "by": "topic",
@@ -1074,7 +1290,15 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "limit",
+          "spt"
+        ]
       },
       {
         "by": "momentum",
@@ -1087,7 +1311,16 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "status",
+          "limit",
+          "spt"
+        ]
       },
       {
         "by": "emerging",
@@ -1099,7 +1332,16 @@ export const MEASURES: MeasureDef[] = [
             "param": "spt",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "window",
+          "platform",
+          "organic_only",
+          "product_type",
+          "status",
+          "limit",
+          "spt"
+        ]
       },
       {
         "by": "week",
@@ -1115,7 +1357,17 @@ export const MEASURES: MeasureDef[] = [
             "param": "brand_id",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "subject_kind",
+          "category",
+          "platform",
+          "organic_only",
+          "weeks",
+          "spt",
+          "brand_id"
+        ],
+        "own_subject": true
       }
     ],
     "params": [
@@ -1156,6 +1408,8 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
         "description": "Max results to return (default 25, min 1, max 100)"
       },
       {
@@ -1196,6 +1450,8 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "weeks",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 104,
         "description": "How many trailing ISO weeks to return."
       }
     ]
@@ -1220,7 +1476,17 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "window",
+          "platform",
+          "organic_only",
+          "brand",
+          "limit",
+          "spt",
+          "brand_id"
+        ]
       },
       {
         "by": "product_name",
@@ -1236,7 +1502,18 @@ export const MEASURES: MeasureDef[] = [
             "param": "brand_id",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "window",
+          "platform",
+          "organic_only",
+          "brand",
+          "product_type",
+          "type_source",
+          "limit",
+          "spt",
+          "brand_id"
+        ]
       },
       {
         "by": "practice",
@@ -1249,7 +1526,18 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "channel",
+          "lane",
+          "practice",
+          "window",
+          "platform",
+          "organic_only",
+          "limit",
+          "spt"
+        ]
       }
     ],
     "params": [
@@ -1290,6 +1578,8 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
         "description": "Max results to return (default 25, min 1, max 100)"
       },
       {
@@ -1382,7 +1672,16 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "country",
+          "window",
+          "platform",
+          "organic_only",
+          "limit",
+          "spt"
+        ]
       },
       {
         "by": "launch",
@@ -1395,7 +1694,16 @@ export const MEASURES: MeasureDef[] = [
             "as": "id"
           }
         },
-        "name": "category"
+        "name": "category",
+        "params": [
+          "category",
+          "country",
+          "window",
+          "platform",
+          "organic_only",
+          "limit",
+          "spt"
+        ]
       }
     ],
     "params": [
@@ -1440,6 +1748,8 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
         "description": "Maximum ranked brands to return."
       },
       {
@@ -1460,7 +1770,13 @@ export const MEASURES: MeasureDef[] = [
         "price_usd": "0.01",
         "answers": "every shelf, product type, brand and chain a term names, as ids",
         "subject": {},
-        "name": "term"
+        "name": "term",
+        "params": [
+          "term",
+          "kinds",
+          "within",
+          "country"
+        ]
       },
       {
         "by": "browse_node",
@@ -1468,7 +1784,11 @@ export const MEASURES: MeasureDef[] = [
         "price_usd": "0.01",
         "answers": "Amazon browse node ids or phrases to GS1 GPC codes",
         "subject": {},
-        "name": "q"
+        "name": "q",
+        "params": [
+          "browse_id",
+          "q"
+        ]
       },
       {
         "by": "gpc_browse_nodes",
@@ -1480,7 +1800,10 @@ export const MEASURES: MeasureDef[] = [
             "param": "gpc_code",
             "as": "value"
           }
-        }
+        },
+        "params": [
+          "gpc_code"
+        ]
       },
       {
         "by": "gpc_attributes",
@@ -1492,7 +1815,10 @@ export const MEASURES: MeasureDef[] = [
             "param": "gpc_code",
             "as": "value"
           }
-        }
+        },
+        "params": [
+          "gpc_code"
+        ]
       }
     ],
     "params": [
@@ -1569,14 +1895,25 @@ export const MEASURES: MeasureDef[] = [
             "param": "id",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "id",
+          "relations",
+          "limit",
+          "country"
+        ]
       },
       {
         "by": "similar",
         "route": "/v1/ontology/similar",
         "price_usd": "0.01",
         "answers": "the brands most like a footprint of shelves",
-        "subject": {}
+        "subject": {},
+        "params": [
+          "shelf",
+          "brand",
+          "limit"
+        ]
       }
     ],
     "params": [
@@ -1593,6 +1930,8 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "limit",
         "type": "integer",
+        "minimum": 1,
+        "maximum": 200,
         "description": "Most items in each list."
       },
       {
@@ -1648,7 +1987,12 @@ export const MEASURES: MeasureDef[] = [
             "param": "id",
             "as": "id"
           }
-        }
+        },
+        "params": [
+          "id",
+          "retailer",
+          "country"
+        ]
       }
     ],
     "params": [

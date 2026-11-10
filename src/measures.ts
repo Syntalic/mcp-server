@@ -100,21 +100,20 @@ export function translate(
     return { ok: false, message: `Unknown by "${by}" for ${measure.name}. Use one of: ${bys.join(", ")}. ${FREE}` };
   }
 
-  const params: QueryParams = {};
+  // Everything sent, by name. Which of it goes to the route is settled once
+  // the split is known: a tool offers the union of its routes' parameters.
+  const sent: QueryParams = {};
   for (const p of measure.params) {
     const v = args[p.name];
     if (v === undefined || v === null || v === "") continue;
-    params[p.name] = Array.isArray(v) ? v.map(String) : String(v);
+    sent[p.name] = Array.isArray(v) ? v.map(String) : String(v);
   }
 
   // The weekly series has a parameter of its own called `subject`, beside
   // `subject_kind`: with that sent, the subject is the route's and passes
   // through as it is.
   const ownSubject =
-    candidates.length === 1 &&
-    measure.params.some((p) => p.name === "subject_kind") &&
-    candidates[0]!.route.endsWith("/series") &&
-    params.subject_kind !== undefined;
+    candidates.length === 1 && candidates[0]!.own_subject === true && sent.subject_kind !== undefined;
   const subject = (args.subject ?? "").trim();
   const id = subject && !ownSubject ? parseId(subject) : null;
 
@@ -123,7 +122,7 @@ export function translate(
     split = candidates[0];
   } else {
     const classes = candidates.map((s) => s.about).filter((c): c is NonNullable<MeasureSplit["about"]> => !!c);
-    const fromParams = classes.filter((c) => CLASS_PARAMS[c].some((p) => params[p] !== undefined));
+    const fromParams = classes.filter((c) => CLASS_PARAMS[c].some((p) => sent[p] !== undefined));
     const cls = id ? CLASS_OF[id.kind] : fromParams.length === 1 ? fromParams[0] : undefined;
     split = cls ? candidates.find((s) => s.about === cls) : undefined;
     if (!split) {
@@ -137,6 +136,13 @@ export function translate(
     }
   }
   if (!split) return { ok: false, message: `Unknown by "${by}" for ${measure.name}. ${FREE}` };
+
+  // Only what the route reads is sent to it. An argument that belongs to
+  // another split of the measure is dropped here, not left for the API to
+  // ignore, or to refuse once it rejects parameters it does not know.
+  const reads = new Set(split.params);
+  const params: QueryParams = {};
+  for (const [name, value] of Object.entries(sent)) if (reads.has(name)) params[name] = value;
 
   if (ownSubject) {
     params.subject = subject || undefined;
@@ -165,16 +171,26 @@ export function translate(
     params[name] = value;
   }
 
-  // A parameter the chosen route does not read is left out: the tool offers
-  // the union of its routes' parameters, and the route would only ignore it.
   return { ok: true, split, route: split.route, params };
 }
 
 function paramSchema(p: MeasureParam): z.ZodTypeAny {
   let base: z.ZodTypeAny;
-  if (p.enum && p.enum.length > 0) base = z.enum(p.enum as [string, ...string[]]);
-  else if (p.type === "integer" || p.type === "number") base = z.number();
-  else if (p.type === "boolean") base = z.boolean();
+  const numeric = p.type === "integer" || p.type === "number";
+  if (p.enum && p.enum.length > 0 && numeric) {
+    // The API's own values, as numbers (win is 7, 30 or 90).
+    const [first, second, ...rest] = p.enum.map((v) => z.literal(Number(v)));
+    base = second ? z.union([first!, second, ...rest]) : first!;
+  } else if (p.enum && p.enum.length > 0) {
+    base = z.enum(p.enum.map(String) as [string, ...string[]]);
+  } else if (numeric) {
+    // The route's own bounds, so an out-of-range value is caught here.
+    let n = z.number();
+    if (p.type === "integer") n = n.int();
+    if (p.minimum !== undefined) n = n.min(p.minimum);
+    if (p.maximum !== undefined) n = n.max(p.maximum);
+    base = n;
+  } else if (p.type === "boolean") base = z.boolean();
   else base = z.string();
   if (p.array) base = z.array(base);
   return (p.description ? base.describe(p.description) : base).optional();

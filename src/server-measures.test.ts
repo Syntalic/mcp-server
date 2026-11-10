@@ -16,6 +16,12 @@ const API_BASE = "https://api.test";
 const FREE = ["wallet_info", "catalog_overview", "browse_categories", "list_retailers", "list_brands", "coverage_map"];
 const measure = (name: string) => MEASURES.find((m) => m.name === name)!;
 
+/** server.ts without its comments, so a commented-out tool does not count. */
+const src = (): string =>
+  readFileSync(new URL("./server.ts", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+
 async function solanaKey(): Promise<string> {
   const key = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
   const priv = new Uint8Array(await crypto.subtle.exportKey("pkcs8", key.privateKey));
@@ -65,7 +71,10 @@ afterEach(() => {
 describe("the tool list", () => {
   it("is the per-route tools by default, with no measure among them", async () => {
     const names = (await (await connect()).listTools()).tools.map((t) => t.name);
-    assert.equal(names.length, 40);
+    // Every tool server.ts registers, however many that is.
+    const registered = [...src().matchAll(/server\.tool\(\s*"([a-z_]+)"/g)].map((m) => m[1]!);
+    assert.ok(registered.length > 30, `only ${registered.length} tools found in server.ts`);
+    assert.deepEqual([...names].sort(), [...registered].sort());
     for (const m of MEASURES) assert.ok(!names.includes(m.name), `${m.name} is listed by default`);
   });
 
@@ -75,8 +84,8 @@ describe("the tool list", () => {
   });
 
   it("is at least 30% smaller, measured as the JSON a client is sent", async () => {
-    // 49,387 characters for the per-route tools against 32,313 for the measures when this was written
-    // (about 12.3k and 8.1k tokens at four characters each): 17 tools in place of 40, and 35% less to read.
+    // 49,387 characters for the per-route tools against 32,059 for the measures when this was written
+    // (about 12.3k and 8.0k tokens at four characters each): 17 tools in place of 40, and 35% less to read.
     const size = async (mode?: "routes" | "measures") =>
       JSON.stringify((await (await connect(mode)).listTools()).tools).length;
     const [routes, measures] = [await size(), await size("measures")];
@@ -103,10 +112,7 @@ describe("the tool list", () => {
 
 describe("the measures reach every route the per-route tools call", () => {
   it("has a split for each paid path in server.ts", () => {
-    const src = readFileSync(new URL("./server.ts", import.meta.url), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
-    const called = [...src.matchAll(/query\(\s*"(\/v1\/[^"]+)"/g)].map((m) => m[1]!);
+    const called = [...src().matchAll(/query\(\s*"(\/v1\/[^"]+)"/g)].map((m) => m[1]!);
     assert.ok(called.length > 25, `only ${called.length} paid paths found`);
     const reached = new Set(MEASURES.flatMap((m) => m.splits.map((s) => s.route)));
     assert.deepEqual(called.filter((p) => !reached.has(p)), []);
@@ -142,6 +148,41 @@ describe("a measure call goes to the route its split names", () => {
     await call(client, "resolve", { term: ["olipop", "poppi"], kinds: "brand" });
     assert.equal(seen[0]!.pathname, "/v1/ontology/resolve");
     assert.deepEqual(seen[0]!.searchParams.getAll("term"), ["olipop", "poppi"]);
+  });
+
+  it("sends the route only what it reads, not another split's arguments", async () => {
+    const client = await connect("measures");
+    // sort_by and department belong to other splits of prices; price-bands reads neither.
+    await call(client, "prices", { by: "band", subject: "electronics/computers", sort_by: "price_asc", department: "Grocery" });
+    assert.equal(seen[0]!.pathname, "/v1/analyst/price-bands");
+    assert.deepEqual([...seen[0]!.searchParams.keys()], ["node"]);
+  });
+
+  it("takes any retailer, as the API and the per-route tools do", async () => {
+    const client = await connect("measures");
+    const res = await call(client, "prices", { by: "retailer", subject: "electronics", retailer: "staples" });
+    assert.equal(res.isError, false);
+    assert.equal(seen[0]!.searchParams.get("retailer"), "staples");
+  });
+
+  it("takes win as the number the API types it as, and holds limit to the route's bounds", async () => {
+    const client = await connect("measures");
+    const ok = await call(client, "trend", { subject: "spt:fb-2-17-2-4", by: "product", win: 30 });
+    assert.equal(ok.isError, false);
+    assert.equal(seen[0]!.pathname, "/v1/analyst/price-change-leaders");
+    assert.equal(seen[0]!.searchParams.get("win"), "30");
+    seen = [];
+    const bad = await client.callTool({ name: "trend", arguments: { subject: "spt:fb-2-17-2-4", by: "product", win: 45 } }).then(
+      (r) => (r as { isError?: boolean }).isError === true,
+      () => true,
+    );
+    assert.equal(bad, true);
+    const tooMany = await client.callTool({ name: "offers", arguments: { subject: "airpods", limit: 100000 } }).then(
+      (r) => (r as { isError?: boolean }).isError === true,
+      () => true,
+    );
+    assert.equal(tooMany, true);
+    assert.equal(seen.length, 0);
   });
 
   it("answers compactly: no indentation to pay tokens for", async () => {
