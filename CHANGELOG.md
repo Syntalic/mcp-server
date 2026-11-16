@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **`measure_neighbors` says a shelf also answers `facets` and `labels`.** The default measure tool's text came from the API's measure registry and still read "ancestors, children, types, brands and chains"; it now names the shelf's marketing practices and the `relations=labels` block (what its posts are). Generated text only: the tool already passed `relations` through.
+
 - **`ontology_neighbors` names a category's `facets` and `labels` blocks.** `facets` (the marketing practices creators describe on a shelf, now the wider `marketing-v2` vocabulary) was already in the defaults but unnamed; `labels` (what the posts about a shelf are: kinds, themes and facets, with counts) is returned only when asked for by name, `relations: ["labels"]`. The API serves both (2026-11-16); the tool already passed `relations` through, so this is the description only.
 
 - **Inflation is hidden.** The API's `GET /v1/analyst/inflation` is off (its `INFLATION_ENABLED` flag, off since

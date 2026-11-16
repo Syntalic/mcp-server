@@ -1873,7 +1873,7 @@ export const MEASURES: MeasureDef[] = [
         "by": "relations",
         "route": "/v1/ontology/neighbors",
         "price_usd": "0.01",
-        "answers": "ancestors, children, types, brands and chains around an id",
+        "answers": "ancestors, children, types, brands and chains around an id; for a shelf also its marketing practices (`facets`) and what its posts are (`relations=labels`)",
         "subject": {
           "entity": {
             "param": "id",
