@@ -409,6 +409,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       "every shelf it is filed under. A brand (brand:): the shelves it sells on (`footprint`), " +
       "the chains that carry it (`carried_at`) and the chains we scanned where it lives that do " +
       "NOT (`not_observed_at`). A chain (retailer:): what it sells and which brands it carries. " +
+      "A category also answers two social blocks: `facets` (in the defaults), the marketing practices creators describe " +
+      "on the shelf, and `labels` (ask for it by name: relations [\"labels\"]), what the posts about the shelf ARE: " +
+      "kinds (advice, story, pitch, showcase, demo, news, insight, review), themes (what they are about) and facets such " +
+      "as for_operators, compares_brands or pre_launch, each with creators, posts, brands and example_brands. Word " +
+      "them by their counts, never as a share of the market: they describe the tracked corpus (TikTok and Instagram). " +
       "Pick blocks with `relations`; every list says its `total`.",
     {
       id: z
@@ -419,7 +424,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
         .array(z.string().min(1))
         .optional()
         .describe(
-          "Blocks to return. category: ancestors, children, siblings, types, parallel_homes, aliases, top_brands, top_retailers. product type: ancestry, homes, siblings, aliases. brand: profile, aliases, footprint, carried_at, not_observed_at. chain: profile, assortment, brands. Omit for the kind's defaults.",
+          "Blocks to return. category: ancestors, children, siblings, types, parallel_homes, aliases, top_brands, top_retailers, facets, labels (only when named). product type: ancestry, homes, siblings, aliases. brand: profile, aliases, footprint, carried_at, not_observed_at. chain: profile, assortment, brands. Omit for the kind's defaults.",
         ),
       limit: z.number().int().min(1).max(200).optional().describe("Most items per list (default 25)."),
       country: countrySchema,

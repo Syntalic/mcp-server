@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **`ontology_neighbors` names a category's `facets` and `labels` blocks.** `facets` (the marketing practices creators describe on a shelf, now the wider `marketing-v2` vocabulary) was already in the defaults but unnamed; `labels` (what the posts about a shelf are: kinds, themes and facets, with counts) is returned only when asked for by name, `relations: ["labels"]`. The API serves both (2026-11-16); the tool already passed `relations` through, so this is the description only.
+
 - **Inflation is hidden.** The API's `GET /v1/analyst/inflation` is off (its `INFLATION_ENABLED` flag, off since
   2026-11-16: too little price history for a shelf-level inflation read), and the route answers 404. It is in
   `NOT_LIVE` (`src/measures.ts`), so `measure_trend` no longer offers `by: "period"` on a shelf: `period` is a
