@@ -19,6 +19,8 @@
 // A split whose route the production API does not serve yet is left out of
 // the tools (NOT_LIVE below), so a model is never offered a `by` that answers
 // 404. The generated table keeps it: it is the API's registry, not this list.
+// The per-route tool for such a route (SYNTALIC_TOOLS=routes) is not registered
+// either (server.ts).
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -40,6 +42,7 @@ export type QueryParams = Record<string, string | string[] | undefined>;
  */
 export const NOT_LIVE: Readonly<Record<string, string>> = {
   "/v1/ontology/similar": "SIMILAR_BY_FOOTPRINT (off in production; the route answers 404)",
+  "/v1/analyst/inflation": "INFLATION_ENABLED (off in production since 2026-11-16, too little price history; the route answers 404)",
 };
 
 /** A measure with its not-live splits taken out, its parameters cut to what the remaining splits read,

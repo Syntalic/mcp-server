@@ -44,7 +44,12 @@ const missing = paid.filter((p) => !called.has(p));
 // they answer with the API's 401 until the API opens. Said below, so a release does not go out unaware.
 const ontologyOpen = Object.keys(spec.paths).some((p) => p.startsWith("/v1/ontology/"));
 const stale = [...called].filter(
-  (p) => !p.startsWith("/v1/public/") && !(p in spec.paths) && (ontologyOpen || !p.startsWith("/v1/ontology/")),
+  (p) =>
+    !p.startsWith("/v1/public/") &&
+    !(p in spec.paths) &&
+    // A NOT_LIVE route's per-route tool is not registered (src/server.ts), so its call is not stale.
+    !(p in NOT_LIVE) &&
+    (ontologyOpen || !p.startsWith("/v1/ontology/")),
 );
 
 // The id parameters (ontology): where the spec declares one on an operation, the tool for it must

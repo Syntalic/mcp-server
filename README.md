@@ -96,8 +96,9 @@ the chain that settled, the payer and the transaction.
 ## Tools
 
 By default the server offers **17 tools**: the six free ones below and **11 paid measure tools**, one per
-measure. Set `SYNTALIC_TOOLS=routes` to get the per-route tools used before 0.13.0 back (40 tools: the
-same six free ones and 34 paid tools, one per API route). The measure tools reach every route the
+measure. Set `SYNTALIC_TOOLS=routes` to get the per-route tools used before 0.13.0 back (39 tools: the
+same six free ones and 33 paid tools, one per API route the API serves; `inflation_tracker` comes back with
+the API's inflation route). The measure tools reach every route the
 per-route tools call, at the same price.
 
 ### Public discovery (free — no payment)
@@ -133,7 +134,7 @@ brackets in that measure's description.
 |------|------|----------------------|
 | `measure_offers` | $0.01 | `retailer` |
 | `measure_prices` | $0.01 to $0.02 | `summary`, `distribution`, `band`, `brand`, `product`, `retailer` |
-| `measure_trend` | $0.01 to $0.02 | `period` (a product, a shelf or a brand), `drop`, `product` |
+| `measure_trend` | $0.01 to $0.02 | `period` (a product or a brand), `drop`, `product` |
 | `measure_promotions` | $0.01 | `brand`, `retailer`, `product` |
 | `measure_assortment` | $0.01 to $0.02 | `brand`, `concentration`, `category`, `retailer`, `availability` |
 | `measure_attention` | $0.03 | `brand`, `product`, `category`, `creator`, `product_type`, `topic`, `momentum`, `emerging`, `week` |
@@ -159,8 +160,10 @@ measure_promotions { subject: "grocery", by: "retailer" }
   49,387 (about 8.2k tokens against 12.3k).
 - A split whose route the production API does not serve yet is not offered: its `by` is left out of the
   tool, and so are the parameters only it reads. Today that is `measure_neighbors` by `similar`
-  (`/v1/ontology/similar`, behind the API's `SIMILAR_BY_FOOTPRINT` flag). The list is `NOT_LIVE` in
+  (`/v1/ontology/similar`, behind the API's `SIMILAR_BY_FOOTPRINT` flag) and `measure_trend` by `period`
+  on a shelf (`/v1/analyst/inflation`, behind the API's `INFLATION_ENABLED` flag). The list is `NOT_LIVE` in
   `src/measures.ts`; the generated table keeps the split, so taking the route off the list brings it back.
+  With `SYNTALIC_TOOLS=routes`, a `NOT_LIVE` route's own tool (`inflation_tracker`) is not registered either.
 - The playbook prompts name the per-route tools (`price_positioning`). In this mode that name is a
   split of `measure_prices`, written in square brackets in the description. The playbooks themselves
   are not rewritten. Call `measure_prices`, not `price_positioning` and not `prices`.
@@ -212,7 +215,6 @@ first.) Everything else stays available at once; nothing here routes the agent. 
 
 | Tool | Description |
 |------|-------------|
-| `inflation_tracker` | Category price inflation trends |
 | `price_dispersion` | Price variance across retailers |
 | `retailer_index` | Pricing index for a retailer |
 | `category_summary` | Comprehensive category pricing summary |

@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey } from "viem/accounts";
 import { base58 } from "@scure/base";
-import { createServer } from "./server.js";
+import { HIDDEN_ROUTE_TOOLS, createServer } from "./server.js";
 import { METRICS, PLAYBOOKS, RULES } from "./playbooks.generated.js";
 
 const API_BASE = "https://api.test";
@@ -186,6 +186,8 @@ describe("the id parameters on the paid tools", () => {
     const { tools } = await client.listTools();
     const byName = new Map(tools.map((t) => [t.name, Object.keys((t.inputSchema.properties ?? {}) as object)]));
     for (const [name, params] of Object.entries(EXPECTED)) {
+      // Not registered while its route is dark on the API (NOT_LIVE).
+      if (HIDDEN_ROUTE_TOOLS.includes(name)) continue;
       const have = byName.get(name);
       assert.ok(have, `${name} is not registered`);
       for (const p of params) assert.ok(have.includes(p), `${name} has no ${p}`);
@@ -295,6 +297,9 @@ describe("the playbooks and the rules", () => {
         // a backticked snake_case word is a tool name unless it is a field or a parameter
         const FIELDS = new Set(["price_index", "brand_source", "banded_from", "brand_products", "category_root", "aggregate_by", "not_observed_at", "channels_not_observed", "retailers_scanned", "suggested_next_calls", "co_equal", "brand_id", "entity_uid", "physical_store", "not_observed", "also_ok", "carried_at"]);
         if (FIELDS.has(word)) continue;
+        // A tool hidden while its route is dark (inflation_tracker): the playbooks are generated from the
+        // API repo's shared/playbooks, whose text is changed there, not here.
+        if (HIDDEN_ROUTE_TOOLS.includes(word)) continue;
         assert.ok(names.has(word), `${p.name} names \`${word}\`, which is not a tool of this server`);
       }
     }
@@ -308,7 +313,10 @@ describe("the playbooks and the rules", () => {
     assert.ok(headings.length >= 20, `only ${headings.length} entries`);
     // every metric entry (all but the two envelope entries at the end) names the tool that returns it
     assert.equal(toolLines.length, headings.length - 2);
-    for (const m of toolLines) assert.ok(names.has(m[1]!), `${m[2]} is said to come from \`${m[1]}\`, which is not a tool of this server`);
+    for (const m of toolLines) {
+      if (HIDDEN_ROUTE_TOOLS.includes(m[1]!)) continue; // as above: generated text, changed upstream
+      assert.ok(names.has(m[1]!), `${m[2]} is said to come from \`${m[1]}\`, which is not a tool of this server`);
+    }
     assert.doesNotMatch(METRICS.text, /\{\{|<!--/);
     assert.ok(!METRICS.text.includes("`price_inflation`"), "Eve's name for inflation_tracker");
   });

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.1 (unreleased)
+
+### Changed
+
+- **Inflation is hidden.** The API's `GET /v1/analyst/inflation` is off (its `INFLATION_ENABLED` flag, off since
+  2026-11-16: too little price history for a shelf-level inflation read), and the route answers 404. It is in
+  `NOT_LIVE` (`src/measures.ts`), so `measure_trend` no longer offers `by: "period"` on a shelf: `period` is a
+  product's history or a brand's tracker, and a shelf's price movement is `by: "product"` (the biggest movers).
+  With `SYNTALIC_TOOLS=routes`, `inflation_tracker` is not registered (39 tools in that mode, not 40), and
+  `--help` no longer lists it. The generated measure table is unchanged, so taking the route off `NOT_LIVE`
+  brings both back.
+- The playbook prompts (generated from the API repo) still name `inflation_tracker` in `category-brief`,
+  `diagnose-price-move` and the metric definitions until that text changes upstream.
+
 ## 0.13.0 (unreleased)
 
 ### Changed
