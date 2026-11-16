@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPrompter, printHelp } from "./setup.js";
+import { HIDDEN_ROUTE_TOOLS } from "./server.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -65,7 +66,10 @@ describe("--help", () => {
     const src = readFileSync(join(here, "server.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    const tools = [...src.matchAll(/server\.tool\(\s*"([a-z_]+)"/g)].map((m) => m[1]!);
+    // A tool whose route is dark on the API is not registered, and not listed.
+    const tools = [...src.matchAll(/server\.tool\(\s*"([a-z_]+)"/g)]
+      .map((m) => m[1]!)
+      .filter((t) => !HIDDEN_ROUTE_TOOLS.includes(t));
     const lines: string[] = [];
     const realLog = console.log;
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));

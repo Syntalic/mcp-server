@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createPaidFetch, PaymentError } from "./lib/fetch.js";
 import { formatBalances, readBalances } from "./lib/balances.js";
 import { registerGuidance, SERVER_INSTRUCTIONS } from "./guidance.js";
-import { MEASURE_INSTRUCTIONS, registerMeasureTools } from "./measures.js";
+import { MEASURE_INSTRUCTIONS, NOT_LIVE, registerMeasureTools } from "./measures.js";
 import {
   countrySchema,
   retailerSchema,
@@ -33,6 +33,17 @@ const FREE_TOOLS: ReadonlySet<string> = new Set([
   "list_brands",
   "coverage_map",
 ]);
+
+/** Per-route tools (SYNTALIC_TOOLS=routes) whose route a flag on the API can keep dark, and that route. */
+const ROUTE_TOOLS_BEHIND_FLAGS: Readonly<Record<string, string>> = {
+  inflation_tracker: "/v1/analyst/inflation",
+};
+
+/** The per-route tools not registered, because their route is in NOT_LIVE (src/measures.ts): a tool
+ *  that only answers 404 costs a model a call for nothing. Taking the route off NOT_LIVE brings it back. */
+export const HIDDEN_ROUTE_TOOLS: readonly string[] = Object.entries(ROUTE_TOOLS_BEHIND_FLAGS)
+  .filter(([, route]) => route in NOT_LIVE)
+  .map(([name]) => name);
 
 /** MCP tool annotations (advisory: clients may use them to decide what to confirm). A paid tool is
  *  NOT read-only: running it moves the user's money, and running it twice spends twice, which is
@@ -609,20 +620,24 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   // ── Analyst ($0.02/query) ───────────────────────────────────────
 
-  server.tool(
-    "inflation_tracker",
-    "Track price inflation trends in a category. Costs $0.02.",
-    {
-      category: categoryNameSchema("Product category"),
-      spt: sptSchema,
-      gpc: gpcSchema,
-      country: countrySchema,
-      days: daysSchema,
-    },
-    annotationsFor("inflation_tracker"),
-    async ({ category, spt, gpc, country, days }) =>
-      query("/v1/analyst/inflation", { category, spt, gpc, country, days: days?.toString() }),
-  );
+  // Registered only while the API serves the route: hidden while the API's INFLATION_ENABLED is off
+  // (HIDDEN_ROUTE_TOOLS).
+  if (!HIDDEN_ROUTE_TOOLS.includes("inflation_tracker")) {
+    server.tool(
+      "inflation_tracker",
+      "Track price inflation trends in a category. Costs $0.02.",
+      {
+        category: categoryNameSchema("Product category"),
+        spt: sptSchema,
+        gpc: gpcSchema,
+        country: countrySchema,
+        days: daysSchema,
+      },
+      annotationsFor("inflation_tracker"),
+      async ({ category, spt, gpc, country, days }) =>
+        query("/v1/analyst/inflation", { category, spt, gpc, country, days: days?.toString() }),
+    );
+  }
 
   // Hidden until the backend endpoint is implemented. Re-enable by uncommenting.
   // server.tool(

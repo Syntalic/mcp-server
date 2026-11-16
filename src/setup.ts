@@ -113,7 +113,6 @@ export function printHelp() {
       availability_index      Out-of-stock rates by retailer or category
 
     Analyst ($0.02)
-      inflation_tracker       Like-for-like price change in a category
       price_dispersion        Price spread across a category
       retailer_index          A retailer's price index
       price_bands             A shelf's price tiers
@@ -286,7 +285,7 @@ function printExampleQueries() {
     '    "Track how Nike pricing has moved versus Adidas at major US retailers."',
   );
   console.log(
-    '    "What is the inflation trend for groceries over the last 6 months?"',
+    '    "Which grocery products moved most on price this month?"',
   );
   console.log("");
 }

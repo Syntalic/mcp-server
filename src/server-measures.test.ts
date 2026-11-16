@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey } from "viem/accounts";
 import { base58 } from "@scure/base";
-import { createServer } from "./server.js";
+import { HIDDEN_ROUTE_TOOLS, createServer } from "./server.js";
 import { MEASURES } from "./measures.generated.js";
 import { LIVE_MEASURES, NOT_LIVE, describeMeasure, liveMeasure, measureToolName, parseId, translate } from "./measures.js";
 import { parseToolsMode } from "./lib/env.js";
@@ -82,9 +82,13 @@ describe("the tool list", () => {
   it("is the per-route tools with SYNTALIC_TOOLS=routes, with no measure among them", async () => {
     const names = (await (await connect("routes")).listTools()).tools.map((t) => t.name);
     // Every tool server.ts registers, however many that is.
-    const registered = [...src().matchAll(/server\.tool\(\s*"([a-z_]+)"/g)].map((m) => m[1]!);
+    // Every tool server.ts registers, however many that is, but those its route's flag keeps dark.
+    const registered = [...src().matchAll(/server\.tool\(\s*"([a-z_]+)"/g)]
+      .map((m) => m[1]!)
+      .filter((n) => !HIDDEN_ROUTE_TOOLS.includes(n));
     assert.ok(registered.length > 30, `only ${registered.length} tools found in server.ts`);
     assert.deepEqual([...names].sort(), [...registered].sort());
+    for (const hidden of HIDDEN_ROUTE_TOOLS) assert.ok(!names.includes(hidden), `${hidden} is listed`);
     for (const m of MEASURES) {
       assert.ok(!names.includes(m.name), `${m.name} is listed in routes mode`);
       assert.ok(!names.includes(measureToolName(m.name)), `${measureToolName(m.name)} is listed in routes mode`);
@@ -149,8 +153,10 @@ describe("a route the API does not serve is not offered", () => {
       const tool = tools.find((t) => t.name === measureToolName(m.name));
       if (!tool) continue;
       const by = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).by;
+      // A by two splits share (trend by period) stays offered for its live splits only.
+      const live = liveMeasure(m)!;
       for (const value of by?.enum ?? []) {
-        for (const split of m.splits.filter((s) => s.by === value)) {
+        for (const split of live.splits.filter((s) => s.by === value)) {
           checked++;
           assert.ok(!(split.route in NOT_LIVE), `${tool.name} by ${value} routes to ${split.route}`);
           assert.notEqual(split.route, "/v1/ontology/similar", `${tool.name} by ${value}`);
@@ -178,6 +184,12 @@ describe("a route the API does not serve is not offered", () => {
   it("drops a not-live split, its parameters, and moves the default off it", () => {
     const neighbors = liveMeasure(measure("neighbors"))!;
     assert.deepEqual(neighbors.splits.map((s) => s.by), ["relations"]);
+    // The API's INFLATION_ENABLED is off: trend by period is a product's or a brand's, not a shelf's.
+    assert.ok("/v1/analyst/inflation" in NOT_LIVE);
+    const trend = liveMeasure(measure("trend"))!;
+    assert.deepEqual(trend.splits.filter((s) => s.by === "period").map((s) => s.about), ["product", "brand"]);
+    assert.ok(!trend.splits.some((s) => s.route === "/v1/analyst/inflation"));
+    assert.deepEqual(HIDDEN_ROUTE_TOOLS, ["inflation_tracker"]);
     assert.deepEqual(neighbors.params.map((p) => p.name), ["id", "relations", "limit", "country"]);
     const moved = liveMeasure(measure("prices"), { [measure("prices").splits[0]!.route]: "test" })!;
     assert.notEqual(moved.default_by, measure("prices").splits[0]!.by);
@@ -188,7 +200,8 @@ describe("a route the API does not serve is not offered", () => {
 
 describe("the measures reach every route the per-route tools call", () => {
   it("has a live split for each paid path in server.ts", () => {
-    const called = [...src().matchAll(/query\(\s*"(\/v1\/[^"]+)"/g)].map((m) => m[1]!);
+    // A route in NOT_LIVE has neither a split nor a registered tool.
+    const called = [...src().matchAll(/query\(\s*"(\/v1\/[^"]+)"/g)].map((m) => m[1]!).filter((p) => !(p in NOT_LIVE));
     assert.ok(called.length > 25, `only ${called.length} paid paths found`);
     const reached = new Set(LIVE_MEASURES.flatMap((m) => m.splits.map((s) => s.route)));
     assert.deepEqual(called.filter((p) => !reached.has(p)), []);
@@ -270,7 +283,8 @@ describe("a measure call goes to the route its split names", () => {
     const client = await connect();
     const res = await call(client, "trend", { subject: "apple" });
     assert.equal(res.isError, true);
-    assert.match(res.text, /can be about product, shelf, brand/);
+    // A shelf too while the API serves /v1/analyst/inflation (NOT_LIVE).
+    assert.match(res.text, /can be about product, (shelf, )?brand/);
     assert.match(res.text, /Nothing was called or billed/);
     assert.equal(seen.length, 0);
   });
