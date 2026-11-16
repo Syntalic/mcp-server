@@ -9,6 +9,8 @@
  * Run before publishing:  npm run check:parity
  */
 import { readFileSync } from "node:fs";
+import { MEASURES } from "../src/measures.generated.js";
+import { NOT_LIVE } from "../src/measures.js";
 
 const API = process.env.SYNTALIC_API_BASE ?? "https://api.syntalic.com";
 
@@ -74,6 +76,14 @@ for (const [path, item] of Object.entries(spec.paths)) {
   }
 }
 
+// The measure tools (the default): every route a split names must be served, or be in NOT_LIVE
+// (src/measures.ts), which hides its split. A NOT_LIVE route that the spec now lists can come off it.
+const measureRoutes = [...new Set(MEASURES.flatMap((m) => m.splits.map((s) => s.route)))];
+const deadSplits = measureRoutes.filter(
+  (p) => !(p in spec.paths) && !(p in NOT_LIVE) && (ontologyOpen || !p.startsWith("/v1/ontology/")),
+);
+const nowLive = Object.keys(NOT_LIVE).filter((p) => p in spec.paths);
+
 console.log(`API paid routes : ${paid.length}`);
 console.log(`MCP tool paths  : ${called.size}`);
 
@@ -96,5 +106,16 @@ if (unpassed.length) {
   console.error(`\n${unpassed.length} id parameter(s) the API declares and the tool does not pass:`);
   unpassed.forEach((p) => console.error("   " + p));
 }
-if (missing.length || stale.length || unpassed.length) process.exit(1);
-console.log("\nparity OK: every paid route has a tool, every tool has a route, every id parameter is passed.");
+if (deadSplits.length) {
+  console.error(`\n${deadSplits.length} measure route(s) the API does not serve, not in NOT_LIVE (src/measures.ts):`);
+  deadSplits.forEach((p) => console.error("   " + p));
+}
+if (nowLive.length) {
+  console.warn(`\nnote: ${nowLive.length} NOT_LIVE route(s) are now in the spec; take them off NOT_LIVE to offer them:`);
+  nowLive.forEach((p) => console.warn("   " + p));
+}
+if (missing.length || stale.length || unpassed.length || deadSplits.length) process.exit(1);
+console.log(
+  "\nparity OK: every paid route has a tool, every tool has a route, every id parameter is passed, " +
+    "every measure split is served or hidden.",
+);

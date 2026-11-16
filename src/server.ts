@@ -68,24 +68,25 @@ export interface ServerConfig {
   apiKey?: string;
   /** True if the user has run --setup at least once to view their keys. */
   backupAcknowledged?: boolean;
-  /** Which paid tools to offer. "routes" (the default): one tool per API route. "measures": one tool per
-   *  measure (src/measures.ts), each reaching the same routes through `by`. The free tools are in both. */
+  /** Which paid tools to offer. "measures" (the default): one tool per measure (src/measures.ts), each
+   *  reaching the routes through `by`. "routes": one tool per API route. The free tools are in both. */
   tools?: "routes" | "measures";
 }
 
 export async function createServer(config: ServerConfig): Promise<McpServer> {
+  const measures = (config.tools ?? "measures") === "measures";
   const server = new McpServer(
     {
       name: "syntalic-pricing-intelligence",
       version: VERSION,
     },
-    { instructions: config.tools === "measures" ? MEASURE_INSTRUCTIONS : SERVER_INSTRUCTIONS },
+    { instructions: measures ? MEASURE_INSTRUCTIONS : SERVER_INSTRUCTIONS },
   );
 
-  // With the measure tools on, the per-route paid tools below are not registered: the measures reach the
+  // With the measure tools on (the default), the per-route paid tools below are not registered: the measures reach the
   // same routes, and offering both would double the list a model reads on every turn. The registrations
   // stay as they are (the parity checks read this file); only the free tools get through.
-  if (config.tools === "measures") {
+  if (measures) {
     const register = server.tool.bind(server) as (...args: unknown[]) => unknown;
     (server as unknown as { tool: (...args: unknown[]) => unknown }).tool = (...args: unknown[]) =>
       FREE_TOOLS.has(String(args[0])) ? register(...args) : undefined;
@@ -1128,7 +1129,7 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       }),
   );
 
-  if (config.tools === "measures") {
+  if (measures) {
     // Past the filter above: registered on the prototype's own method.
     delete (server as unknown as { tool?: unknown }).tool;
     registerMeasureTools(server, query, annotationsFor);

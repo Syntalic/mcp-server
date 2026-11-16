@@ -51,6 +51,8 @@ async function connect(apiKey: string | undefined): Promise<Client> {
     solanaPrivateKey: await solanaKey(),
     apiKey,
     backupAcknowledged: true,
+    // The per-route tools: measures are the default since 0.13.0.
+    tools: "routes",
   });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0" });

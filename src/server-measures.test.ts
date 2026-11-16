@@ -1,4 +1,4 @@
-// The measure tools (SYNTALIC_TOOLS=measures): one paid tool per measure in place of one per route.
+// The measure tools (the default since 0.13.0; SYNTALIC_TOOLS=routes brings back one tool per route).
 // Driven through a real client over an in-memory transport, against a stubbed fetch, so what is
 // asserted is the tool list a client sees and the request that goes over the wire.
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -10,7 +10,8 @@ import { generatePrivateKey } from "viem/accounts";
 import { base58 } from "@scure/base";
 import { createServer } from "./server.js";
 import { MEASURES } from "./measures.generated.js";
-import { describeMeasure, measureToolName, parseId, translate } from "./measures.js";
+import { LIVE_MEASURES, NOT_LIVE, describeMeasure, liveMeasure, measureToolName, parseId, translate } from "./measures.js";
+import { parseToolsMode } from "./lib/env.js";
 
 const API_BASE = "https://api.test";
 const FREE = ["wallet_info", "catalog_overview", "browse_categories", "list_retailers", "list_brands", "coverage_map"];
@@ -69,36 +70,54 @@ afterEach(() => {
 });
 
 describe("the tool list", () => {
-  it("is the per-route tools by default, with no measure among them", async () => {
+  it("is the free tools and one prefixed tool per live measure by default", async () => {
     const names = (await (await connect()).listTools()).tools.map((t) => t.name);
+    assert.deepEqual([...names].sort(), [...FREE, ...LIVE_MEASURES.map((m) => measureToolName(m.name))].sort());
+    assert.ok(LIVE_MEASURES.length >= 10, `only ${LIVE_MEASURES.length} measures`);
+    const explicit = (await (await connect("measures")).listTools()).tools.map((t) => t.name);
+    assert.deepEqual(explicit, names);
+    assert.match((await connect()).getInstructions() ?? "", /Every other tool is a\s+measure/);
+  });
+
+  it("is the per-route tools with SYNTALIC_TOOLS=routes, with no measure among them", async () => {
+    const names = (await (await connect("routes")).listTools()).tools.map((t) => t.name);
     // Every tool server.ts registers, however many that is.
     const registered = [...src().matchAll(/server\.tool\(\s*"([a-z_]+)"/g)].map((m) => m[1]!);
     assert.ok(registered.length > 30, `only ${registered.length} tools found in server.ts`);
     assert.deepEqual([...names].sort(), [...registered].sort());
     for (const m of MEASURES) {
-      assert.ok(!names.includes(m.name), `${m.name} is listed by default`);
-      assert.ok(!names.includes(measureToolName(m.name)), `${measureToolName(m.name)} is listed by default`);
+      assert.ok(!names.includes(m.name), `${m.name} is listed in routes mode`);
+      assert.ok(!names.includes(measureToolName(m.name)), `${measureToolName(m.name)} is listed in routes mode`);
     }
+    assert.match((await connect("routes")).getInstructions() ?? "", /ontology_resolve/);
   });
 
-  it("with measures on, is the free tools and one prefixed tool per measure", async () => {
-    const names = (await (await connect("measures")).listTools()).tools.map((t) => t.name);
-    assert.deepEqual(names.sort(), [...FREE, ...MEASURES.map((m) => measureToolName(m.name))].sort());
+  it("registers no measure under its bare name", async () => {
+    const names = (await (await connect()).listTools()).tools.map((t) => t.name);
     for (const m of MEASURES) assert.ok(!names.includes(m.name), `${m.name} is registered bare`);
   });
 
+  it("reads SYNTALIC_TOOLS: unset or measures is the measures, routes the per-route tools", () => {
+    assert.equal(parseToolsMode(undefined), "measures");
+    assert.equal(parseToolsMode(""), "measures");
+    assert.equal(parseToolsMode(" Measures "), "measures");
+    assert.equal(parseToolsMode("routes"), "routes");
+    assert.equal(parseToolsMode("ROUTES"), "routes");
+    assert.equal(parseToolsMode("all"), null);
+  });
+
   it("is at least 30% smaller, measured as the JSON a client is sent", async () => {
-    // 49,387 characters for the per-route tools against 32,059 for the measures when this was written
-    // (about 12.3k and 8.0k tokens at four characters each): 17 tools in place of 40, and 35% less to read.
+    // 49,387 characters for the per-route tools against 32,815 for the measures in 0.13.0 (about 12.3k
+    // and 8.2k tokens at four characters each): 17 tools in place of 40, and a third less to read.
     const size = async (mode?: "routes" | "measures") =>
       JSON.stringify((await (await connect(mode)).listTools()).tools).length;
-    const [routes, measures] = [await size(), await size("measures")];
+    const [routes, measures] = [await size("routes"), await size()];
     assert.ok(measures < routes * 0.7, `measures ${measures} chars, routes ${routes} chars`);
   });
 
   it("states each measure's cost, and marks it as spending", async () => {
-    const tools = (await (await connect("measures")).listTools()).tools;
-    for (const m of MEASURES) {
+    const tools = (await (await connect()).listTools()).tools;
+    for (const m of LIVE_MEASURES) {
       const tool = tools.find((t) => t.name === measureToolName(m.name))!;
       assert.match(tool.description ?? "", /Costs \$0\.0\d/, m.name);
       assert.equal(tool.annotations?.readOnlyHint, false, m.name);
@@ -109,26 +128,76 @@ describe("the tool list", () => {
   });
 
   it("tells the client about the measures in its instructions", async () => {
-    const instructions = (await connect("measures")).getInstructions() ?? "";
+    const instructions = (await connect()).getInstructions() ?? "";
     assert.match(instructions, /Every other tool is a\s+measure/);
     assert.match(instructions, /measure_resolve/);
     assert.match(instructions, /The bare names \(offers, prices, resolve\) are not tools/);
-    assert.match((await connect()).getInstructions() ?? "", /ontology_resolve/);
+  });
+});
+
+describe("a route the API does not serve is not offered", () => {
+  it("lists /v1/ontology/similar as not live", () => {
+    assert.ok("/v1/ontology/similar" in NOT_LIVE);
+    // It is still in the generated table: hidden here, not deleted there.
+    assert.ok(MEASURES.some((m) => m.splits.some((s) => s.route === "/v1/ontology/similar")));
+  });
+
+  it("offers no default tool a by whose route is not live", async () => {
+    const tools = (await (await connect()).listTools()).tools;
+    let checked = 0;
+    for (const m of MEASURES) {
+      const tool = tools.find((t) => t.name === measureToolName(m.name));
+      if (!tool) continue;
+      const by = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).by;
+      for (const value of by?.enum ?? []) {
+        for (const split of m.splits.filter((s) => s.by === value)) {
+          checked++;
+          assert.ok(!(split.route in NOT_LIVE), `${tool.name} by ${value} routes to ${split.route}`);
+          assert.notEqual(split.route, "/v1/ontology/similar", `${tool.name} by ${value}`);
+        }
+      }
+      assert.doesNotMatch(tool.description ?? "", /\[similar\]/, tool.name);
+    }
+    // Every live split is reachable through some by, and only those (40 of the table's 41 in 0.13.0).
+    assert.equal(checked, LIVE_MEASURES.reduce((n, m) => n + m.splits.length, 0));
+    assert.ok(checked > 30, `only ${checked} splits checked`);
+    const neighbors = tools.find((t) => t.name === measureToolName("neighbors"))!;
+    const props = Object.keys(neighbors.inputSchema.properties ?? {});
+    assert.ok(!props.includes("shelf"), "the similar split's footprint parameter is offered");
+  });
+
+  it("refuses by=similar without calling the API", async () => {
+    const client = await connect();
+    const refused = await client
+      .callTool({ name: measureToolName("neighbors"), arguments: { by: "similar", brand: "olipop" } })
+      .then((r) => (r as { isError?: boolean }).isError === true, () => true);
+    assert.equal(refused, true);
+    assert.equal(seen.length, 0);
+  });
+
+  it("drops a not-live split, its parameters, and moves the default off it", () => {
+    const neighbors = liveMeasure(measure("neighbors"))!;
+    assert.deepEqual(neighbors.splits.map((s) => s.by), ["relations"]);
+    assert.deepEqual(neighbors.params.map((p) => p.name), ["id", "relations", "limit", "country"]);
+    const moved = liveMeasure(measure("prices"), { [measure("prices").splits[0]!.route]: "test" })!;
+    assert.notEqual(moved.default_by, measure("prices").splits[0]!.by);
+    assert.ok(moved.splits.some((s) => s.by === moved.default_by));
+    assert.equal(liveMeasure(measure("coverage"), { "/v1/ontology/coverage": "test" }), null);
   });
 });
 
 describe("the measures reach every route the per-route tools call", () => {
-  it("has a split for each paid path in server.ts", () => {
+  it("has a live split for each paid path in server.ts", () => {
     const called = [...src().matchAll(/query\(\s*"(\/v1\/[^"]+)"/g)].map((m) => m[1]!);
     assert.ok(called.length > 25, `only ${called.length} paid paths found`);
-    const reached = new Set(MEASURES.flatMap((m) => m.splits.map((s) => s.route)));
+    const reached = new Set(LIVE_MEASURES.flatMap((m) => m.splits.map((s) => s.route)));
     assert.deepEqual(called.filter((p) => !reached.has(p)), []);
   });
 });
 
 describe("a measure call goes to the route its split names", () => {
   it("sends an id subject as the route's id parameter", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     const res = await call(client, "prices", { subject: "spt:fb-2-17-2-4", by: "distribution", country: "ca" });
     assert.equal(res.isError, false);
     assert.equal(seen.length, 1);
@@ -137,28 +206,28 @@ describe("a measure call goes to the route its split names", () => {
   });
 
   it("uses the default split, and sends a name as the route's name parameter", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     await call(client, "assortment", { subject: "electronics" });
     assert.equal(seen[0]!.pathname, "/v1/marketing/share-of-shelf");
     assert.equal(seen[0]!.searchParams.get("category"), "electronics");
   });
 
   it("sets what the split fixes", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     await call(client, "promotions", { subject: "grocery", by: "retailer" });
     assert.equal(seen[0]!.pathname, "/v1/marketing/promo-intelligence");
     assert.equal(seen[0]!.searchParams.get("aggregate_by"), "retailer");
   });
 
   it("repeats a list parameter, one value each", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     await call(client, "resolve", { term: ["olipop", "poppi"], kinds: "brand" });
     assert.equal(seen[0]!.pathname, "/v1/ontology/resolve");
     assert.deepEqual(seen[0]!.searchParams.getAll("term"), ["olipop", "poppi"]);
   });
 
   it("sends the route only what it reads, not another split's arguments", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     // sort_by and department belong to other splits of prices; price-bands reads neither.
     await call(client, "prices", { by: "band", subject: "electronics/computers", sort_by: "price_asc", department: "Grocery" });
     assert.equal(seen[0]!.pathname, "/v1/analyst/price-bands");
@@ -166,14 +235,14 @@ describe("a measure call goes to the route its split names", () => {
   });
 
   it("takes any retailer, as the API and the per-route tools do", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     const res = await call(client, "prices", { by: "retailer", subject: "electronics", retailer: "staples" });
     assert.equal(res.isError, false);
     assert.equal(seen[0]!.searchParams.get("retailer"), "staples");
   });
 
   it("takes win as the number the API types it as, and holds limit to the route's bounds", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     const ok = await call(client, "trend", { subject: "spt:fb-2-17-2-4", by: "product", win: 30 });
     assert.equal(ok.isError, false);
     assert.equal(seen[0]!.pathname, "/v1/analyst/price-change-leaders");
@@ -193,12 +262,12 @@ describe("a measure call goes to the route its split names", () => {
   });
 
   it("answers compactly: no indentation to pay tokens for", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     assert.equal((await call(client, "coverage", { subject: "gpc:10008059" })).text, '{"ok":true}');
   });
 
   it("refuses what it cannot place without calling the API", async () => {
-    const client = await connect("measures");
+    const client = await connect();
     const res = await call(client, "trend", { subject: "apple" });
     assert.equal(res.isError, true);
     assert.match(res.text, /can be about product, shelf, brand/);
