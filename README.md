@@ -95,6 +95,11 @@ the chain that settled, the payer and the transaction.
 
 ## Tools
 
+By default the server offers **17 tools**: the six free ones below and **11 paid measure tools**, one per
+measure. Set `SYNTALIC_TOOLS=routes` to get the per-route tools used before 0.13.0 back (40 tools: the
+same six free ones and 34 paid tools, one per API route). The measure tools reach every route the
+per-route tools call, at the same price.
+
 ### Public discovery (free — no payment)
 
 Understand the shape and coverage of the catalog before spending on a paid query.
@@ -107,7 +112,66 @@ Understand the shape and coverage of the catalog before spending on a paid query
 | `list_brands` | Brands with product counts (optional `q` prefix filter) |
 | `coverage_map` | Where the catalog is deep vs thin — quality status per retailer × country × category |
 
-### Ontology ($0.01/query)
+### Utility (free)
+
+| Tool | Description |
+|------|-------------|
+| `wallet_info` | Show your wallet addresses, their live balance on each chain, and funding instructions |
+
+### Measure tools (the default)
+
+Eleven paid tools, one per measure. A measure is a metric family; `by` picks how the answer is split and
+`subject` says what it is about. Each split is one API route, so nothing is lost: between them the
+measures reach every paid route the API serves, including five the per-route tools do not
+(`product-share`, `product-names`, `brand-signals`, `emerging-brands` and `tactics`).
+
+The tool name is `measure_` plus the measure, so a call to `prices` or to a route the playbooks
+name (`price_positioning`, `ontology_resolve`) is not a tool. The route is a split, named in square
+brackets in that measure's description.
+
+| Tool | Cost | `by` (default first) |
+|------|------|----------------------|
+| `measure_offers` | $0.01 | `retailer` |
+| `measure_prices` | $0.01 to $0.02 | `summary`, `distribution`, `band`, `brand`, `product`, `retailer` |
+| `measure_trend` | $0.01 to $0.02 | `period` (a product, a shelf or a brand), `drop`, `product` |
+| `measure_promotions` | $0.01 | `brand`, `retailer`, `product` |
+| `measure_assortment` | $0.01 to $0.02 | `brand`, `concentration`, `category`, `retailer`, `availability` |
+| `measure_attention` | $0.03 | `brand`, `product`, `category`, `creator`, `product_type`, `topic`, `momentum`, `emerging`, `week` |
+| `measure_signals` | $0.03 | `brand`, `product_name`, `practice` |
+| `measure_scout` | $0.05 | `gap`, `launch` |
+| `measure_resolve` | $0.01 | `name`, `browse_node`, `gpc_browse_nodes`, `gpc_attributes` |
+| `measure_neighbors` | $0.01 | `relations` |
+| `measure_coverage` | $0.01 | `evidence` |
+
+```
+measure_prices     { subject: "spt:fb-2-17-2-4", by: "distribution" }
+measure_trend      { subject: "brand:b_ac1a1c7143cb2199" }
+measure_promotions { subject: "grocery", by: "retailer" }
+```
+
+- `subject` is an id from `measure_resolve` (`spt:`, `gpc:`, `brand:`, `retailer:`, `entity:`) or a name. It is
+  sent to the route as the parameter of its kind. Every other argument is the route's own.
+- The server translates the call and calls the route itself, so the tools work against any deployment of
+  the API and a call costs what the route costs. The API's own `/v1/measures/*` paths are not used.
+- A `by` the measure does not have, a subject the split cannot take, or a `by` that could be about two
+  things with nothing to say which, is refused by the server before any request is made.
+- 17 tools in place of 40, and a tool list a third smaller: 32,815 characters of tool definitions against
+  49,387 (about 8.2k tokens against 12.3k).
+- A split whose route the production API does not serve yet is not offered: its `by` is left out of the
+  tool, and so are the parameters only it reads. Today that is `measure_neighbors` by `similar`
+  (`/v1/ontology/similar`, behind the API's `SIMILAR_BY_FOOTPRINT` flag). The list is `NOT_LIVE` in
+  `src/measures.ts`; the generated table keeps the split, so taking the route off the list brings it back.
+- The playbook prompts name the per-route tools (`price_positioning`). In this mode that name is a
+  split of `measure_prices`, written in square brackets in the description. The playbooks themselves
+  are not rewritten. Call `measure_prices`, not `price_positioning` and not `prices`.
+
+### Per-route tools (`SYNTALIC_TOOLS=routes`)
+
+One paid tool per API route, the default before 0.13.0. They replace the measure tools; the free tools
+stay. The playbook prompts name these tools, and in the default mode each of them is a split of a measure,
+named in square brackets in the measure's description.
+
+#### Ontology ($0.01/query)
 
 What a name means, what sits next to it, and how much evidence stands behind it. They cost one cent a
 call like the other lookups, with no key and no account: the wallet pays the same x402 or MPP
@@ -122,7 +186,7 @@ first.) Everything else stays available at once; nothing here routes the agent. 
 | `ontology_neighbors` | What sits next to one id: a shelf's siblings and types, a brand's shelves and the chains that do and do not carry it, a chain's assortment |
 | `ontology_coverage` | How much evidence stands behind ids and which chains were scanned: the denominators of "not seen at X" |
 
-### Shopper ($0.01/query)
+#### Shopper ($0.01/query)
 
 | Tool | Description |
 |------|-------------|
@@ -131,7 +195,7 @@ first.) Everything else stays available at once; nothing here routes the agent. 
 | `deal_finder` | Current deals in a category |
 | `price_drop_alert` | Recent price drops |
 
-### Marketing ($0.01/query)
+#### Marketing ($0.01/query)
 
 | Tool | Description |
 |------|-------------|
@@ -144,7 +208,7 @@ first.) Everything else stays available at once; nothing here routes the agent. 
 | `retailer_assortment` | Which retail chains carry a brand or category |
 | `availability_index` | Out-of-stock rates by retailer or category |
 
-### Analyst ($0.02/query)
+#### Analyst ($0.02/query)
 
 | Tool | Description |
 |------|-------------|
@@ -155,7 +219,7 @@ first.) Everything else stays available at once; nothing here routes the agent. 
 | `category_concentration` | How concentrated a category is, few brands vs fragmented |
 | `price_change_leaders` | Biggest price movers over 7, 30 or 90 days |
 
-### Social ($0.03/query)
+#### Social ($0.03/query)
 
 TikTok and Instagram only. Every route is scoped to one category, named by its Shopify taxonomy
 path (`health-beauty`, `food-beverages-tobacco`, `food-beverages-tobacco/beverages`): there is no
@@ -173,7 +237,7 @@ that rollup, **not** that the category is quiet, and nothing is billed for it.
 | `product_type_trends` | Attention by product type rather than by brand |
 | `social_series` | Weekly mentions and views time series for one subject (`brand`, or `subject` + `subject_kind`) |
 
-### Scout, cross-domain ($0.05/query)
+#### Scout, cross-domain ($0.05/query)
 
 The only routes that bind both corpora to one category axis and one brand key.
 
@@ -181,55 +245,6 @@ The only routes that bind both corpora to one category axis and one brand key.
 |------|-------------|
 | `attention_vs_shelf` | Brands ranked by share-of-conversation vs share-of-shelf gap |
 | `launch_buzz` | New shelf arrivals against the conversation around their brand |
-
-### Utility
-
-| Tool | Description |
-|------|-------------|
-| `wallet_info` | Show your wallet addresses, their live balance on each chain, and funding instructions |
-
-## Measure tools (opt-in)
-
-Set `SYNTALIC_TOOLS=measures` and the paid tools above are replaced by 11, one per measure. The free
-tools and `wallet_info` stay. A measure is a metric family; `by` picks how the answer is split and
-`subject` says what it is about. Each split is one API route, so nothing is lost: between them the
-measures reach every paid route, including six the per-route tools do not (`product-share`,
-`product-names`, `brand-signals`, `emerging-brands`, `tactics` and the ontology's `similar`).
-
-The tool name is `measure_` plus the measure, so a call to `prices` or to a route the playbooks
-name (`price_positioning`, `ontology_resolve`) is not a tool. The route is a split, named in square
-brackets in that measure's description. `SYNTALIC_TOOLS` unset, or `routes`, keeps the per-route tools.
-
-| Tool | Cost | `by` (default first) |
-|------|------|----------------------|
-| `measure_offers` | $0.01 | `retailer` |
-| `measure_prices` | $0.01 to $0.02 | `summary`, `distribution`, `band`, `brand`, `product`, `retailer` |
-| `measure_trend` | $0.01 to $0.02 | `period` (a product, a shelf or a brand), `drop`, `product` |
-| `measure_promotions` | $0.01 | `brand`, `retailer`, `product` |
-| `measure_assortment` | $0.01 to $0.02 | `brand`, `concentration`, `category`, `retailer`, `availability` |
-| `measure_attention` | $0.03 | `brand`, `product`, `category`, `creator`, `product_type`, `topic`, `momentum`, `emerging`, `week` |
-| `measure_signals` | $0.03 | `brand`, `product_name`, `practice` |
-| `measure_scout` | $0.05 | `gap`, `launch` |
-| `measure_resolve` | $0.01 | `name`, `browse_node`, `gpc_browse_nodes`, `gpc_attributes` |
-| `measure_neighbors` | $0.01 | `relations`, `similar` |
-| `measure_coverage` | $0.01 | `evidence` |
-
-```
-measure_prices     { subject: "spt:fb-2-17-2-4", by: "distribution" }
-measure_trend      { subject: "brand:b_ac1a1c7143cb2199" }
-measure_promotions { subject: "grocery", by: "retailer" }
-```
-
-- `subject` is an id from `measure_resolve` (`spt:`, `gpc:`, `brand:`, `retailer:`, `entity:`) or a name. It is
-  sent to the route as the parameter of its kind. Every other argument is the route's own.
-- The server translates the call and calls the route itself, so the tools work against any deployment of
-  the API and a call costs what the route costs. The API's own `/v1/measures/*` paths are not used.
-- A `by` the measure does not have, a subject the split cannot take, or a `by` that could be about two
-  things with nothing to say which, is refused by the server before any request is made.
-- 17 tools in place of 40, and a tool list about 35% smaller (32k characters against 49k).
-- The playbook prompts name the per-route tools (`price_positioning`). In this mode that name is a
-  split of `measure_prices`, written in square brackets in the description. The playbooks themselves
-  are not rewritten. Call `measure_prices`, not `price_positioning` and not `prices`.
 
 ## Parameters
 
@@ -292,7 +307,7 @@ All env vars are optional — a wallet is auto-generated on first run.
 | `SYNTALIC_TEMPO_RPC_URL` | Custom Tempo RPC for balance checks (default `https://rpc.tempo.xyz`, HTTPS enforced) |
 | `SYNTALIC_BASE_RPC_URL` | Custom Base RPC for the balances `wallet_info` and `--info` show (default `https://mainnet.base.org`, HTTPS enforced) |
 | `SYNTALIC_PAYMENT_NETWORK` | Pay on one chain only: `solana`, `base` or `tempo` (default: try all, in that order). Any other value stops the server at startup |
-| `SYNTALIC_TOOLS` | `measures` offers one paid tool per measure in place of one per route (see Measure tools). `routes` or unset keeps the per-route tools. Any other value stops the server at startup |
+| `SYNTALIC_TOOLS` | Which paid tools to offer. Unset or `measures` (the default since 0.13.0): one tool per measure (see Measure tools). `routes`: one tool per API route, as before 0.13.0. Any other value stops the server at startup |
 | `SYNTALIC_PAYMENT_TRACE` | `1` writes one stderr line per paid call: the chain that settled, the payer and the transaction |
 
 If both `SYNTALIC_EVM_PRIVATE_KEY` and `SYNTALIC_SOLANA_PRIVATE_KEY` are set, `~/.syntalic/wallet.json` is untouched.
@@ -314,7 +329,7 @@ Versions before 0.6.0 used the package's pre-rebrand naming. Both changes are ha
 
 ## How It Works
 
-1. You call an MCP tool (e.g. `best_price(q: "wireless earbuds")`).
+1. You call an MCP tool (e.g. `measure_offers(subject: "wireless earbuds")`, which calls `/v1/shopper/best-price`).
 2. The server makes an HTTP request to the Syntalic Pricing API.
 3. The API returns `402 Payment Required` with requirements for Solana, Base, and Tempo.
 4. The client runs balance pre-checks, signs a payment on the first eligible chain, and retries.
@@ -364,7 +379,9 @@ unreachable from any agent.
   (`shared/measures/mcp/measures.generated.ts`; `npx tsx scripts/export-measures.ts` in `api/` renders it
   from the API's measure registry and its OpenAPI document; copy it here). Do not edit it.
   `src/server-measures.test.ts` holds the measure tools to it: every paid path `server.ts` calls has a
-  split, and a call reaches the route its split names.
+  live split, a call reaches the route its split names, and no default tool offers a `by` whose route
+  is in `NOT_LIVE`. `npm run check:parity` also fails on a measure route the live API does not serve
+  and `NOT_LIVE` does not list, and names any `NOT_LIVE` route the API now serves.
 - `src/playbooks.generated.ts` is vendored from `shared/playbooks` in the Syntalic
   repository (`node shared/playbooks/sync.mjs` renders it; copy it here). Do not
   edit it in this repository.

@@ -30,6 +30,8 @@ async function connect(): Promise<Client> {
     evmPrivateKey: generatePrivateKey(),
     solanaPrivateKey: base58.encode(bytes),
     backupAcknowledged: true,
+    // The per-route tools: measures are the default since 0.13.0.
+    tools: "routes",
   });
   const [c, s] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0" });

@@ -30,7 +30,7 @@ if (process.argv.includes("--info")) {
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
-import { readEnv } from "./lib/env.js";
+import { parseToolsMode, readEnv } from "./lib/env.js";
 import { loadOrCreateWallet } from "./lib/wallet.js";
 
 const DEFAULT_API_BASE = "https://api.syntalic.com";
@@ -61,15 +61,14 @@ if (rawApiBase !== DEFAULT_API_BASE) {
 }
 const apiBase = rawApiBase;
 const apiKey = readEnv("API_KEY").value;
-// SYNTALIC_TOOLS=measures offers one paid tool per measure, named measure_<name>,
-// in place of one per route (src/measures.ts). Anything else, or unset, keeps the per-route tools.
+// SYNTALIC_TOOLS picks the paid tools. Unset or "measures" (the default since 0.13.0): one paid tool per
+// measure, named measure_<name> (src/measures.ts). "routes": one per API route, as before 0.13.0.
 const toolsVar = readEnv("TOOLS");
-const toolsMode = (toolsVar.value ?? "").trim().toLowerCase();
-if (toolsMode && toolsMode !== "routes" && toolsMode !== "measures") {
-  console.error(`${toolsVar.name} must be "routes" or "measures" (got "${toolsVar.value}").`);
+const tools = parseToolsMode(toolsVar.value);
+if (tools === null) {
+  console.error(`${toolsVar.name} must be "measures" (the default) or "routes" (got "${toolsVar.value}").`);
   process.exit(1);
 }
-const tools: "routes" | "measures" = toolsMode === "measures" ? "measures" : "routes";
 
 // Env vars are supported as overrides for advanced users (CI, shared secrets,
 // read-only home dirs). If both are provided, we skip the wallet file entirely.

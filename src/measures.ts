@@ -10,11 +10,15 @@
 // tools work against any deployment of the API, whether or not it has opened
 // its own /v1/measures paths, and a call costs what the route costs.
 //
-// Off by default: SYNTALIC_TOOLS=measures swaps the per-route paid tools for
-// these (index.ts). Each tool is registered as measure_<name>, so a call to
-// the bare name or to a route the playbooks name does not hit a measure.
-// The free catalog tools and wallet_info stay either way. Unset keeps the
-// per-route tools.
+// On by default since 0.13.0: SYNTALIC_TOOLS unset (or `measures`) offers these
+// in place of the per-route paid tools, and SYNTALIC_TOOLS=routes brings the
+// per-route tools back (index.ts). Each tool is registered as measure_<name>,
+// so a call to the bare name or to a route the playbooks name does not hit a
+// measure. The free catalog tools and wallet_info stay either way.
+//
+// A split whose route the production API does not serve yet is left out of
+// the tools (NOT_LIVE below), so a model is never offered a `by` that answers
+// 404. The generated table keeps it: it is the API's registry, not this list.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -27,6 +31,36 @@ import {
 } from "./measures.generated.js";
 
 export type QueryParams = Record<string, string | string[] | undefined>;
+
+/**
+ * Routes in the generated table that https://api.syntalic.com does not serve yet, with the API flag that
+ * opens each. A split on one of them is not offered: no `by` for it, none of its parameters. Remove an
+ * entry once the route is in the live /openapi.json; `npm run check:parity` names any entry that is, and
+ * any measure route that is neither live nor listed here.
+ */
+export const NOT_LIVE: Readonly<Record<string, string>> = {
+  "/v1/ontology/similar": "SIMILAR_BY_FOOTPRINT (off in production; the route answers 404)",
+};
+
+/** A measure with its not-live splits taken out, its parameters cut to what the remaining splits read,
+ *  and its default moved to the first remaining split if its own was taken out. Null when none remain. */
+export function liveMeasure(measure: MeasureDef, notLive: Readonly<Record<string, string>> = NOT_LIVE): MeasureDef | null {
+  const splits = measure.splits.filter((s) => !(s.route in notLive));
+  if (splits.length === 0) return null;
+  if (splits.length === measure.splits.length) return measure;
+  const read = new Set(splits.flatMap((s) => s.params));
+  return {
+    ...measure,
+    splits,
+    params: measure.params.filter((p) => read.has(p.name)),
+    default_by: splits.some((s) => s.by === measure.default_by) ? measure.default_by : splits[0]!.by,
+  };
+}
+
+/** The measures the server offers: the generated table without the routes in NOT_LIVE. */
+export const LIVE_MEASURES: readonly MeasureDef[] = MEASURES.map((m) => liveMeasure(m)).filter(
+  (m): m is MeasureDef => m !== null,
+);
 
 const ID_SHAPES: Record<SubjectKind, RegExp> = {
   spt: /^[a-z]{2}(?:-\d+)*$/,
@@ -234,7 +268,7 @@ export function describeMeasure(measure: MeasureDef): string {
   );
 }
 
-/** What a client is told at connection when the measure tools are on. */
+/** What a client is told at connection when the measure tools are on (the default). */
 export const MEASURE_INSTRUCTIONS =
   "Syntalic prices, brands and shelves. Free: wallet_info and the catalog discovery tools. Every other tool is a " +
   "measure, and its name starts with measure_: measure_offers, measure_prices, measure_trend, measure_promotions, " +
@@ -261,7 +295,7 @@ export function registerMeasureTools(
   query: MeasureQuery,
   annotations: (name: string) => ToolAnnotations,
 ): void {
-  for (const measure of MEASURES) {
+  for (const measure of LIVE_MEASURES) {
     const bys = [...new Set(measure.splits.map((s) => s.by))] as [string, ...string[]];
     const shape: Record<string, z.ZodTypeAny> = {
       subject: z

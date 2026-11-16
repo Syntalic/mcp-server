@@ -32,3 +32,13 @@ export function readEnv(suffix: string): EnvVar {
   }
   return { value: undefined, name: currentName };
 }
+
+/** SYNTALIC_TOOLS as the server reads it: unset, empty or "measures" is the measure tools (the default
+ *  since 0.13.0), "routes" the per-route tools, in any case and with spaces trimmed. Anything else is
+ *  null, and the server refuses to start. */
+export function parseToolsMode(raw: string | undefined): "routes" | "measures" | null {
+  const mode = (raw ?? "").trim().toLowerCase();
+  if (mode === "" || mode === "measures") return "measures";
+  if (mode === "routes") return "routes";
+  return null;
+}
