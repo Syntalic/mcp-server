@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **`measure_trend` takes `time_window` and `lookback_days` on a product's price history (SYNLBS-259).**
+  0.14.0 first refused `time_window` there, because the API dropped it and answered over its 30-day
+  default (a paid 404 in the 2026-11-18 hand-run). The API reads it since 2026-11-18 (Crush-Rewards/syntalic
+  #1659), and documents `lookback_days`, so the measure table is re-rendered from the API's `main` and both
+  go through. `price-drop-alert` still reads `lookback_days` only, so `time_window` is still refused there.
+
 - **`measure_signals` by `practice` takes every channel the API does (SYNLBS-269).** The generated measure
   table still had the marketing-v1 vocabulary, so `channel` accepted only `email`. The API's tactics route
   (`/v1/social/tactics`) takes nine: `email`, `retail`, `supply`, `brand_launch`, `growth`, `social`,

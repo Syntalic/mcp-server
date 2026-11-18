@@ -53,9 +53,6 @@ export const NOT_LIVE: Readonly<Record<string, string>> = {
  * parameter or stops declaring it. `npm run check:parity` lists the entries on every run.
  */
 export const UNREAD_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  "/v1/shopper/price-history": {
-    time_window: "price-history reads from and to, not time_window (SYNLBS-259)",
-  },
   "/v1/shopper/price-drop-alert": {
     time_window: "price-drop-alert reads lookback_days, not time_window",
   },

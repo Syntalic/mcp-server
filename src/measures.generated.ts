@@ -467,6 +467,7 @@ export const MEASURES: MeasureDef[] = [
           "country",
           "retailer",
           "time_window",
+          "lookback_days",
           "from",
           "to",
           "win",
@@ -638,7 +639,14 @@ export const MEASURES: MeasureDef[] = [
           "quarter_to_date",
           "custom"
         ],
-        "description": "Historical window preset."
+        "description": "The chart's range, as a preset."
+      },
+      {
+        "name": "lookback_days",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 730,
+        "description": "Days back from now, through now: the same range as time_window=last_N_days."
       },
       {
         "name": "from",
@@ -709,12 +717,6 @@ export const MEASURES: MeasureDef[] = [
         "name": "brand_id",
         "type": "string",
         "description": "A brand by id, from GET /v1/ontology/resolve (a brand match's `id`)."
-      },
-      {
-        "name": "lookback_days",
-        "type": "integer",
-        "minimum": 1,
-        "description": "Days to look back for price drops (default 30)."
       },
       {
         "name": "limit",

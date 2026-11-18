@@ -21,7 +21,7 @@ const called = new Set([...src.matchAll(/query\w*\(\s*"(\/v1\/[^"]+)"/g)].map((m
 
 // SYNTALIC_SPEC_FILE reads a saved spec instead of fetching one: how to check against a deployment
 // that has the ontology open when the live one does not yet, or without a network.
-type Spec = { paths: Record<string, { get?: { parameters?: { name: string }[] } }> };
+type Spec = { paths: Record<string, { get?: { parameters?: { name: string }[]; security?: unknown[] } }> };
 let spec: Spec;
 if (process.env.SYNTALIC_SPEC_FILE) {
   spec = JSON.parse(readFileSync(process.env.SYNTALIC_SPEC_FILE, "utf8")) as Spec;
@@ -34,9 +34,11 @@ if (process.env.SYNTALIC_SPEC_FILE) {
   spec = (await res.json()) as Spec;
 }
 
-// /v1/public/* is free and intentionally only partly wrapped; everything else
-// under /v1 is a priced route an agent should be able to reach.
-const paid = Object.keys(spec.paths).filter((p) => p.startsWith("/v1/") && !p.startsWith("/v1/public/"));
+// /v1/public/* is free and intentionally only partly wrapped, and so is any operation the spec marks free
+// (`security: []`, such as the measures index /v1/measures, in the spec since 2026-11-18); everything
+// else under /v1 is a priced route an agent should be able to reach.
+const markedFree = (p: string) => Array.isArray(spec.paths[p]?.get?.security) && spec.paths[p]!.get!.security!.length === 0;
+const paid = Object.keys(spec.paths).filter((p) => p.startsWith("/v1/") && !p.startsWith("/v1/public/") && !markedFree(p));
 
 // The measure tools (the default) reach a route through a split, which is a tool for it too. The API's
 // own /v1/measures/<name> paths are not called (the server translates to the split's route itself), so

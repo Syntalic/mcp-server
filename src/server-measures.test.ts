@@ -252,20 +252,23 @@ describe("a measure call goes to the route its split names", () => {
     assert.match(res.text, /Nothing was called or billed/);
   });
 
-  it("refuses time_window on a product's price history, and takes it on a brand's (SYNLBS-266)", async () => {
+  it("takes time_window and lookback_days on a product's price history, as on a brand's (SYNLBS-259, SYNLBS-266)", async () => {
     const client = await connect();
-    // The 2026-11-18 incident: price-history drops time_window, the 30-day default applied, and a paid
-    // call answered 404. Its spec lists time_window, so UNREAD_PARAMS holds it until the API reads it.
+    // The 2026-11-18 incident: price-history dropped time_window, the 30-day default applied, and a paid call
+    // answered 404, so UNREAD_PARAMS refused it. The API reads it since 2026-11-18 (#1659), and documents
+    // lookback_days, so both now go through.
     const res = await call(client, "trend", { subject: "entity:85ab90654c05144e8d25fed106d73c35", time_window: "last_90_days" });
-    assert.equal(res.isError, true);
-    assert.equal(seen.length, 0);
-    assert.match(res.text, /by period \(a product\) is answered by \/v1\/shopper\/price-history, which does not read time_window/);
-    assert.match(res.text, /reads from and to, not time_window/);
-    assert.match(res.text, /time_window is read by period \(a brand\)/);
+    assert.equal(res.isError, false, res.text);
+    assert.equal(seen[0]!.pathname, "/v1/shopper/price-history");
+    assert.equal(seen[0]!.searchParams.get("time_window"), "last_90_days");
+    assert.equal(seen[0]!.searchParams.get("entity_uid"), "85ab90654c05144e8d25fed106d73c35");
+    const days = await call(client, "trend", { subject: "entity:85ab90654c05144e8d25fed106d73c35", lookback_days: 90 });
+    assert.equal(days.isError, false, days.text);
+    assert.equal(seen[1]!.searchParams.get("lookback_days"), "90");
     const brand = await call(client, "trend", { subject: "brand:b_ac1a1c7143cb2199", time_window: "last_90_days" });
     assert.equal(brand.isError, false, brand.text);
-    assert.equal(seen[0]!.pathname, "/v1/marketing/brand-tracker");
-    assert.equal(seen[0]!.searchParams.get("time_window"), "last_90_days");
+    assert.equal(seen[2]!.pathname, "/v1/marketing/brand-tracker");
+    assert.equal(seen[2]!.searchParams.get("time_window"), "last_90_days");
   });
 
   it("takes from and to on a product's price history", async () => {
