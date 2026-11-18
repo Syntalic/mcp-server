@@ -379,7 +379,10 @@ unreachable from any agent.
   id parameters on the paid tools, the annotations, the prompts and the resources.
 - `src/measures.generated.ts` is vendored from the Syntalic repository
   (`shared/measures/mcp/measures.generated.ts`; `npx tsx scripts/export-measures.ts` in `api/` renders it
-  from the API's measure registry and its OpenAPI document; copy it here). Do not edit it.
+  from the API's measure registry and its OpenAPI document; copy it here). Do not edit it. The script is
+  not on the API's `main` yet: take `api/scripts/export-measures.ts` from the branch
+  `claude/intelligent-lamport-v2w1n9`, run it over `main`'s `api/` with `INFLATION_ENABLED=true` (the
+  script opens the other dark routes itself; without that flag the inflation split loses its parameters).
   `src/server-measures.test.ts` holds the measure tools to it: every paid path `server.ts` calls has a
   live split, a call reaches the route its split names, and no default tool offers a `by` whose route
   is in `NOT_LIVE`. `npm run check:parity` also fails on a measure route the live API does not serve

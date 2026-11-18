@@ -274,6 +274,18 @@ describe("a measure call goes to the route its split names", () => {
     assert.equal(seen.length, 0);
   });
 
+  it("takes every channel the tactics route takes, not only email (SYNLBS-269)", async () => {
+    const client = await connect();
+    const tool = (await client.listTools()).tools.find((t) => t.name === measureToolName("signals"))!;
+    const channel = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).channel;
+    const nine = ["email", "retail", "supply", "brand_launch", "growth", "social", "site", "branding", "customer"];
+    assert.deepEqual([...(channel?.enum ?? [])].sort(), [...nine].sort());
+    const res = await call(client, "signals", { by: "practice", subject: "spt:fb-2-17-2-4", channel: "retail" });
+    assert.equal(res.isError, false, res.text);
+    assert.equal(seen[0]!.pathname, "/v1/social/tactics");
+    assert.equal(seen[0]!.searchParams.get("channel"), "retail");
+  });
+
   it("answers compactly: no indentation to pay tokens for", async () => {
     const client = await connect();
     assert.equal((await call(client, "coverage", { subject: "gpc:10008059" })).text, '{"ok":true}');

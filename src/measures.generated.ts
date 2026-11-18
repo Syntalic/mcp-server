@@ -340,7 +340,7 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "department",
         "type": "string",
-        "description": "Top-level department (root category), e.g."
+        "description": "A Shopify taxonomy root, e.g."
       },
       {
         "name": "country",
@@ -390,12 +390,13 @@ export const MEASURES: MeasureDef[] = [
         "name": "sort_by",
         "type": "string",
         "enum": [
+          "representative",
           "price_asc",
           "price_desc",
           "rating",
           "reviews"
         ],
-        "description": "Sort order (rating/reviews accepted for compatibility; fall back to price_asc)"
+        "description": "Sort order."
       },
       {
         "name": "cursor",
@@ -677,7 +678,7 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "department",
         "type": "string",
-        "description": "Top-level department (root category), e.g."
+        "description": "A Shopify taxonomy root, e.g."
       },
       {
         "name": "granularity",
@@ -702,7 +703,7 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "brand",
         "type": "string",
-        "description": "Brand name (e.g., Sony, Samsung, Nike)"
+        "description": "Brand name (e.g., Sony, Samsung, Nike) A name that is nowhere in the catalog under that spelling is refused before payment, when the request arrives without payment attached (the normal 402 flow): a 404 whose error.deta…"
       },
       {
         "name": "brand_id",
@@ -1133,7 +1134,7 @@ export const MEASURES: MeasureDef[] = [
       {
         "name": "brand",
         "type": "string",
-        "description": "Brand name (e.g., Sony, Samsung, Nike)"
+        "description": "Brand name (e.g., Sony, Samsung, Nike) A name that is nowhere in the catalog under that spelling is refused before payment, when the request arrives without payment attached (the normal 402 flow): a 404 whose error.deta…"
       },
       {
         "name": "brand_id",
@@ -1611,9 +1612,17 @@ export const MEASURES: MeasureDef[] = [
         "name": "channel",
         "type": "string",
         "enum": [
-          "email"
+          "email",
+          "retail",
+          "supply",
+          "brand_launch",
+          "growth",
+          "social",
+          "site",
+          "branding",
+          "customer"
         ],
-        "description": "Only practices in this channel of the marketing-v1 vocabulary."
+        "description": "Only practices in this channel of the marketing-v2 vocabulary."
       },
       {
         "name": "lane",
@@ -1627,7 +1636,17 @@ export const MEASURES: MeasureDef[] = [
           "hero",
           "footer",
           "design",
-          "cadence"
+          "cadence",
+          "getting_in",
+          "manufacturer_search",
+          "prelaunch",
+          "scaling",
+          "formats",
+          "creators",
+          "planning",
+          "conversion",
+          "identity",
+          "service"
         ],
         "description": "Only practices in this lane (a group of practices within a channel)."
       },
@@ -1650,7 +1669,28 @@ export const MEASURES: MeasureDef[] = [
           "final_cta",
           "bright_visuals",
           "editorial_layout",
-          "stated_cadence"
+          "stated_cadence",
+          "retail_ready_first",
+          "mid_tier_first",
+          "buyer_timelines",
+          "door_by_door",
+          "retailer_discovery_event",
+          "long_supplier_list",
+          "pitch_like_investor",
+          "preorder_list",
+          "build_in_public",
+          "launch_event_creators",
+          "channel_ladder",
+          "named_series",
+          "founder_on_camera",
+          "questions_to_content",
+          "gifting_not_paid",
+          "content_system",
+          "per_buyer_pages",
+          "homepage_headline",
+          "origin_story_research",
+          "packaging_for_use",
+          "founder_handles_service"
         ],
         "description": "Only this practice, by its vocabulary id."
       }
@@ -1826,7 +1866,7 @@ export const MEASURES: MeasureDef[] = [
         "name": "term",
         "type": "string",
         "array": true,
-        "description": "A name to resolve: a category, a product type, a brand, a chain."
+        "description": "A name to resolve: a category, a product type, a brand, a chain, a hashtag."
       },
       {
         "name": "kinds",
