@@ -82,16 +82,36 @@ Other clients that take an `mcpServers` file:
 | x402 | **Base** | USDC | EVM (`0x...`) |
 | MPP | **Tempo** | USDC.e | EVM (`0x...`) |
 
-Base and Tempo share the same EVM address. Solana uses a separate keypair. The client tries chains in that order (Solana first — lowest fees) and falls through when a chain doesn't have enough balance.
+Base and Tempo share the same EVM address. Solana uses a separate keypair. The client tries chains in that order (Solana first — lowest fees) and moves to the next one only when nothing was paid on the one before (see Smart Routing).
 
 ## Smart Routing
 
 On every query, the client:
 
 1. Derives your Solana USDC ATA and checks balance via public RPC. Enough → pay on Solana. Not enough, or the balance could not be read → skip.
-2. Attempts payment on Base. Falls through on insufficient-balance errors only.
+2. Attempts payment on Base.
 3. Checks USDC.e balance on Tempo, signs an MPP receipt, retries.
 4. All chains exhausted → throws a clear `PaymentError` listing what happened per chain.
+
+It moves on from a chain only when nothing was paid there:
+
+- the chain was skipped before anything was signed (a `SYNTALIC_PAYMENT_NETWORK` pin, a balance
+  pre-check, an unreadable Solana balance);
+- the API refused the payment at verify for its balance (`invalid_exact_evm_insufficient_balance`,
+  `permit2_insufficient_balance`, Solana's `transaction_simulation_failed`);
+- the API answered `402` again with no settlement response: it asks again only when nothing was captured;
+- the connection was never made (refused, DNS, connect timeout), so the payment never left the machine.
+
+Once a signed payment may have reached the API, the client stops on that chain. The next chain would
+sign a new authorization with its own nonce, so if the first one settled, the call would be paid twice.
+A gateway error with no settlement response (a `502` or `504`), a connection that drops after the request
+went out, Solana's `transaction_failed` (which the facilitator also answers when the transaction was sent
+and its confirmation timed out), or a settlement response that says the payment settled followed by an
+error: the tool says the payment's outcome is unknown (or that it settled), with what is known (the
+chain, the payer, the HTTP status, the transaction or receipt, the request id), and tries no other
+chain. Check the balance or the transaction before calling again. An answer from the API itself after
+payment, such as `404 NO_RESULTS`, is returned as the answer, and any other refusal with a reason (a bad
+signature, a used nonce) stops with a `PaymentError`.
 
 The Solana check fails closed: the public Solana RPC rate-limits often, and an unreadable balance is
 skipped (the `PaymentError` says so) rather than attempted, so a rate-limited RPC never turns into an

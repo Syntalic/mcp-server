@@ -5,7 +5,16 @@ import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { generatePrivateKey } from "viem/accounts";
 import { base58 } from "@scure/base";
-import { createPaidFetch, parsePaymentNetwork, PaymentError } from "./fetch.js";
+import {
+  createPaidFetch,
+  failedBeforeSending,
+  isInsufficientBalance,
+  mayHaveBeenSent,
+  parsePaymentNetwork,
+  PaymentError,
+  PaymentOutcomeUnknownError,
+} from "./fetch.js";
+import { describeUnclearPayment } from "../server.js";
 
 const API = "https://api.test/v1/ontology/resolve?term=x";
 const SOLANA_RPC = "https://api.mainnet-beta.solana.com";
@@ -75,7 +84,15 @@ interface Scenario {
   /** What the Solana RPC answers: a balance, or an HTTP status for a failure. */
   solana: { balance: bigint } | { status: number };
   /** What the API answers a Base payment with. */
-  base: "settles" | "insufficient";
+  base:
+    | "settles"
+    | "insufficient"
+    | "refused" // a 402 with no settlement response: the API asking again
+    | "gateway" // a gateway's 504, no settlement response, no API error body
+    | "settled-then-502" // the settlement response says it settled; the answer is a bare 502
+    | "app-error" // a settled 404 NO_RESULTS in the API's error body
+    | "reset" // the connection drops after the request went out
+    | "unreachable"; // the connection is never made
 }
 interface Log {
   paidWith: string[]; // network of every paid retry the API saw
@@ -120,6 +137,26 @@ async function setup(s: Scenario): Promise<{ paidFetch: typeof fetch; log: Log }
         { ok: true },
         { headers: { "payment-response": b64({ success: true, transaction: "0xfeed", network: BASE, payer: "0xpayer" }) } },
       );
+    }
+    if (network === BASE && s.base === "refused") return Response.json({ x402Version: 2 }, { status: 402 });
+    if (network === BASE && s.base === "gateway") {
+      return new Response("<html>upstream request timeout</html>", {
+        status: 504,
+        headers: { "content-type": "text/html", "x-request-id": "req-504" },
+      });
+    }
+    if (network === BASE && s.base === "settled-then-502") {
+      return new Response("Bad Gateway", {
+        status: 502,
+        headers: { "payment-response": b64({ success: true, transaction: "0xfeed", network: BASE, payer: "0xpayer" }) },
+      });
+    }
+    if (network === BASE && s.base === "app-error") {
+      return Response.json({ error: { code: "NO_RESULTS", message: "No price history found" } }, { status: 404 });
+    }
+    if (network === BASE && (s.base === "reset" || s.base === "unreachable")) {
+      const code = s.base === "reset" ? "ECONNRESET" : "ECONNREFUSED";
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) });
     }
     return Response.json(
       { x402Version: 2 },
@@ -230,6 +267,130 @@ describe("payment routing", () => {
     const { paidFetch } = await setup({ solana: { balance: 0n }, base: "settles" });
     await paidFetch(API);
     assert.deepEqual(lines, [`[syntalic-mcp] paid /v1/ontology/resolve via ${BASE} payer=0xpayer tx=0xfeed`]);
+  });
+});
+
+// SYNLBS-272: once a signed payment may have reached the API, trying the next chain signs a NEW
+// authorization with its own nonce, so a payment that did settle would be paid twice. Only an answer
+// that proves nothing was settled may fall through.
+async function unclear(p: Promise<unknown>): Promise<PaymentOutcomeUnknownError> {
+  try {
+    await p;
+  } catch (err) {
+    assert.ok(err instanceof PaymentOutcomeUnknownError, `expected a PaymentOutcomeUnknownError, got ${String(err)}`);
+    return err;
+  }
+  assert.fail("expected the payment to stop");
+}
+
+describe("a payment whose outcome is unknown stops at that chain", () => {
+  // Solana's balance is unreadable, so it is skipped unpaid; Base is the first chain that pays, and
+  // Tempo (whose balance check is the first thing it does) is the chain a fall-through would reach.
+  const reachedTempo = (log: Log) => log.rpc.includes("tempo");
+
+  it("stops on a gateway's 504 with no settlement response, and says what is known", async () => {
+    console.error = () => {};
+    const { paidFetch, log } = await setup({ solana: { status: 429 }, base: "gateway" });
+    const err = await unclear(paidFetch(API));
+    assert.deepEqual(log.paidWith, [BASE]);
+    assert.equal(reachedTempo(log), false, "a second chain was tried after an unclear payment");
+    assert.equal(err.payment.network, BASE);
+    assert.match(err.payment.payer, /^0x[0-9a-fA-F]{40}$/);
+    assert.equal(err.payment.status, 504);
+    assert.equal(err.payment.requestId, "req-504");
+    assert.equal(err.payment.settled, undefined);
+    assert.deepEqual(err.payment.attempts.map((a) => a.network), [SOLANA], "the skipped chain is still reported");
+    assert.match(err.message, /outcome is unknown/);
+    assert.match(err.message, /No other chain was tried/);
+  });
+
+  it("stops when the settlement response says it settled but the answer is a bare 502", async () => {
+    console.error = () => {};
+    const { paidFetch, log } = await setup({ solana: { status: 429 }, base: "settled-then-502" });
+    const err = await unclear(paidFetch(API));
+    assert.equal(reachedTempo(log), false);
+    assert.equal(err.payment.settled, true);
+    assert.equal(err.payment.transaction, "0xfeed");
+    assert.equal(err.payment.payer, "0xpayer");
+    assert.match(err.message, /settled, but the answer could not be read/);
+  });
+
+  it("stops when the connection drops after the payment was sent", async () => {
+    console.error = () => {};
+    const { paidFetch, log } = await setup({ solana: { status: 429 }, base: "reset" });
+    const err = await unclear(paidFetch(API));
+    assert.equal(reachedTempo(log), false);
+    assert.match(err.payment.reason, /after the signed payment was sent/);
+  });
+
+  it("tells the tool's caller what is known, and not to fund a wallet", async () => {
+    console.error = () => {};
+    const { paidFetch } = await setup({ solana: { status: 429 }, base: "settled-then-502" });
+    const text = describeUnclearPayment(await unclear(paidFetch(API)));
+    assert.match(text, /^The payment settled, but the answer could not be read\./);
+    assert.match(text, /• chain — eip155:8453/);
+    assert.match(text, /• transaction — 0xfeed/);
+    assert.match(text, /• HTTP status — 502/);
+    assert.match(text, /Chains tried before it \(none of them paid\):\n  • solana:/);
+    assert.match(text, /No other chain was tried/);
+    assert.doesNotMatch(text, /funding addresses|Fund one of your wallets/);
+  });
+
+  it("returns a settled application error as the answer, without a second payment", async () => {
+    const { paidFetch, log } = await setup({ solana: { status: 429 }, base: "app-error" });
+    const res = await paidFetch(API);
+    assert.equal(res.status, 404);
+    assert.equal(reachedTempo(log), false);
+  });
+});
+
+describe("a payment known not to have settled falls through to the next chain", () => {
+  it("on a 402 without a settlement response (the API refused it and asked again)", async () => {
+    console.error = () => {};
+    const { paidFetch, log } = await setup({ solana: { status: 429 }, base: "refused" });
+    const err = await paymentError(paidFetch(API));
+    assert.ok(log.rpc.includes("tempo"), "Tempo was not tried");
+    assert.match(err.attempts.find((a) => a.network === BASE)?.reason ?? "", /HTTP 402.*nothing was settled/);
+  });
+
+  it("on insufficient balance at verify", async () => {
+    console.error = () => {};
+    const { paidFetch, log } = await setup({ solana: { status: 429 }, base: "insufficient" });
+    await paymentError(paidFetch(API));
+    assert.ok(log.rpc.includes("tempo"));
+  });
+
+  it("on a connection that was never made", async () => {
+    console.error = () => {};
+    const { paidFetch, log } = await setup({ solana: { status: 429 }, base: "unreachable" });
+    const err = await paymentError(paidFetch(API));
+    assert.ok(log.rpc.includes("tempo"));
+    assert.match(err.attempts.find((a) => a.network === BASE)?.reason ?? "", /before the payment was sent/);
+  });
+});
+
+describe("settle failures and network errors, classified", () => {
+  it("falls through only on failures decided before anything was sent", () => {
+    assert.equal(isInsufficientBalance(BASE, { errorReason: "invalid_exact_evm_insufficient_balance" }), true);
+    assert.equal(isInsufficientBalance(SOLANA, { errorReason: "transaction_simulation_failed" }), true);
+    // The x402 Solana facilitator answers transaction_failed when confirming timed out, too.
+    assert.equal(isInsufficientBalance(SOLANA, { errorReason: "transaction_failed" }), false);
+    assert.equal(mayHaveBeenSent(SOLANA, { errorReason: "transaction_failed" }), true);
+    assert.equal(mayHaveBeenSent(SOLANA, { errorReason: "transaction_simulation_failed" }), false);
+    assert.equal(mayHaveBeenSent(BASE, { errorReason: "transaction_failed" }), false);
+  });
+
+  it("reads a connection that was never made through cause and AggregateError", () => {
+    const wrap = (code: string) => new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) });
+    assert.equal(failedBeforeSending(wrap("ECONNREFUSED")), true);
+    assert.equal(failedBeforeSending(wrap("ENOTFOUND")), true);
+    assert.equal(failedBeforeSending(wrap("UND_ERR_CONNECT_TIMEOUT")), true);
+    assert.equal(failedBeforeSending(wrap("ECONNRESET")), false);
+    assert.equal(failedBeforeSending(wrap("UND_ERR_SOCKET")), false);
+    assert.equal(failedBeforeSending(wrap("UND_ERR_HEADERS_TIMEOUT")), false);
+    assert.equal(failedBeforeSending(new TypeError("fetch failed")), false);
+    const both = new AggregateError([Object.assign(new Error("v6"), { code: "ENETUNREACH" })], "connect failed");
+    assert.equal(failedBeforeSending(new TypeError("fetch failed", { cause: both })), true);
   });
 });
 

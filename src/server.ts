@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { createPaidFetch, PaymentError } from "./lib/fetch.js";
+import { createPaidFetch, PaymentError, PaymentOutcomeUnknownError } from "./lib/fetch.js";
 import { formatBalances, readBalances } from "./lib/balances.js";
 import { registerGuidance, SERVER_INSTRUCTIONS } from "./guidance.js";
 import { MEASURE_INSTRUCTIONS, NOT_LIVE, registerMeasureTools } from "./measures.js";
@@ -53,6 +53,36 @@ function annotationsFor(name: string): ToolAnnotations {
   return FREE_TOOLS.has(name)
     ? { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
     : { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+}
+
+/** The tool result for a payment whose outcome is unknown (src/lib/fetch.ts): what is known about it,
+ *  and that no other chain was tried. */
+export function describeUnclearPayment(err: PaymentOutcomeUnknownError): string {
+  const p = err.payment;
+  const known = [
+    `  • chain — ${p.network}`,
+    `  • payer — ${p.payer}`,
+    p.status !== undefined ? `  • HTTP status — ${p.status}` : null,
+    p.transaction ? `  • transaction — ${p.transaction}` : null,
+    p.receipt ? `  • receipt — ${p.receipt}` : null,
+    p.requestId ? `  • request id — ${p.requestId}` : null,
+    `  • what came back — ${p.reason}`,
+  ].filter((l): l is string => l !== null);
+  const earlier = p.attempts.map((a) => `  • ${a.network} — ${a.reason}`);
+  return [
+    p.settled
+      ? "The payment settled, but the answer could not be read."
+      : "The payment's outcome is unknown: it may have gone through.",
+    "",
+    ...known,
+    ...(earlier.length ? ["", "Chains tried before it (none of them paid):", ...earlier] : []),
+    "",
+    "No other chain was tried, so this call was not paid twice.",
+    "",
+    "Next steps:",
+    "  • Run `wallet_info` and compare the balance on that chain, or look the transaction up, before calling again.",
+    "  • Calling the tool again signs a new payment.",
+  ].join("\n");
 }
 
 /** A category given by NAME. Optional because the same tools take `spt` or `gpc` instead
@@ -203,6 +233,11 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
           "  • If a chain reports insufficient balance but the wallet is funded, verify the token contract on that chain.",
         ].join("\n");
         return { content: [{ type: "text" as const, text }], isError: true };
+      }
+      // A payment that may have settled (or did, with no answer to show). Same bullets, and never
+      // the "fund a wallet" advice: calling again pays again.
+      if (err instanceof PaymentOutcomeUnknownError) {
+        return { content: [{ type: "text" as const, text: describeUnclearPayment(err) }], isError: true };
       }
       throw err;
     }

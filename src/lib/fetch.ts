@@ -16,6 +16,8 @@ export const DEFAULT_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 export const DEFAULT_TEMPO_RPC_URL = "https://rpc.tempo.xyz";
 const TEMPO_LABEL = "tempo:4217";
 
+// Settle failures that mean nothing was moved, so the next chain may be tried. Each is decided at
+// verify, before anything is sent to a chain: the EVM balance checks, and Solana's simulation.
 // Solana exposes no dedicated "insufficient funds" settle code — transaction_simulation_failed
 // covers that plus unrelated failures. We treat it as balance-related only after the balance
 // pre-check said we were eligible (so it's most likely an RPC flake), giving us graceful
@@ -26,8 +28,46 @@ const INSUFFICIENT_BALANCE_REASONS = new Set<string>([
 ]);
 const AMBIGUOUS_SOLANA_FAILURE_REASONS = new Set<string>([
   "transaction_simulation_failed",
-  "transaction_failed",
 ]);
+// Settle failures reported after the transaction may have gone out. The x402 Solana facilitator
+// answers `transaction_failed` when signing, sending OR confirming throws, so a confirmation that
+// timed out reads the same as a transaction that never left: it may still land. Not a reason to pay
+// again on another chain (SYNLBS-272).
+const MAYBE_SENT_SOLANA_FAILURE_REASONS = new Set<string>(["transaction_failed"]);
+
+/**
+ * fetch's failure codes for a connection that was never made: the signed payment did not leave this
+ * machine, so trying the next chain cannot pay twice. Any other network failure (a reset, a timeout
+ * waiting for the answer, a socket closed mid-answer) can come after the API read the payment and
+ * settled it.
+ */
+const NEVER_SENT_CODES = new Set<string>([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "EHOSTDOWN",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+/** Whether a fetch failure is one of NEVER_SENT_CODES, looking through `cause` and an
+ *  AggregateError's `errors` (one per address tried). */
+export function failedBeforeSending(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  const queue: unknown[] = [err];
+  while (queue.length > 0) {
+    const e = queue.shift();
+    if (!e || typeof e !== "object" || seen.has(e)) continue;
+    seen.add(e);
+    const { code, cause, errors } = e as { code?: unknown; cause?: unknown; errors?: unknown };
+    if (typeof code === "string" && NEVER_SENT_CODES.has(code)) return true;
+    queue.push(cause);
+    if (Array.isArray(errors)) queue.push(...errors);
+  }
+  return false;
+}
 
 interface FetchConfig {
   evmPrivateKey: string;
@@ -79,6 +119,78 @@ export class PaymentError extends Error {
     );
     this.name = "PaymentError";
   }
+}
+
+/** What is known about a payment whose outcome is not. */
+export interface UnclearPayment {
+  /** The chain it went out on: a CAIP-2 id, or tempo:4217. */
+  network: string;
+  /** The address that signed it. */
+  payer: string;
+  /** What was seen instead of an answer. */
+  reason: string;
+  /** The HTTP status of the answer, when there was one. */
+  status?: number;
+  /** True when the API's settlement response said the payment settled. */
+  settled?: boolean;
+  /** The chain transaction, from the settlement response. */
+  transaction?: string;
+  /** A settlement or receipt header that could not be decoded, as sent (cut to 200 characters). */
+  receipt?: string;
+  /** The API's X-Request-Id, for support. */
+  requestId?: string;
+  /** What happened on the chains tried before this one; none of them paid. */
+  attempts: ReadonlyArray<{ network: string; reason: string }>;
+}
+
+/**
+ * A payment went out and what came back does not say whether it settled, or says it settled with no
+ * answer to show for it. No other chain is tried: that would sign a new authorization with its own
+ * nonce, and if the first one settled the user would pay twice for one answer (SYNLBS-272).
+ */
+export class PaymentOutcomeUnknownError extends Error {
+  constructor(public readonly payment: UnclearPayment) {
+    const known = [
+      `chain ${payment.network}`,
+      `payer ${payment.payer}`,
+      payment.status !== undefined ? `HTTP ${payment.status}` : undefined,
+      payment.transaction ? `transaction ${payment.transaction}` : undefined,
+      payment.receipt ? `receipt ${payment.receipt}` : undefined,
+      payment.requestId ? `request id ${payment.requestId}` : undefined,
+    ].filter(Boolean);
+    super(
+      (payment.settled
+        ? `The payment on ${payment.network} settled, but the answer could not be read (${payment.reason}). `
+        : `The payment on ${payment.network} may have settled; its outcome is unknown (${payment.reason}). `) +
+        `No other chain was tried, so this call cannot have been paid twice. Known: ${known.join(", ")}. ` +
+        `Check the payer's balance or the transaction before calling again.`,
+    );
+    this.name = "PaymentOutcomeUnknownError";
+  }
+}
+
+/** What an answer to a paid request says about its payment: the x402 settlement header (decoded, or
+ *  as sent when it does not decode), MPP's receipt, and the request id. */
+function paymentEvidence(response: Response): Pick<UnclearPayment, "status" | "settled" | "transaction" | "receipt" | "requestId"> & {
+  payer?: string;
+} {
+  const out: ReturnType<typeof paymentEvidence> = { status: response.status };
+  const raw = response.headers.get("payment-response") ?? response.headers.get("x-payment-response");
+  if (raw) {
+    try {
+      const settle = decodePaymentResponseHeader(raw);
+      if (settle.success === true) out.settled = true;
+      if (settle.transaction) out.transaction = settle.transaction;
+      if (settle.payer) out.payer = settle.payer;
+    } catch {
+      out.receipt = raw.slice(0, 200);
+    }
+  }
+  const mppReceipt = response.headers.get("payment-receipt");
+  if (mppReceipt && !out.receipt) out.receipt = mppReceipt.slice(0, 200);
+  const requestId = response.headers.get("x-request-id");
+  if (requestId) out.requestId = requestId;
+  return out;
 }
 
 function sanitizeReason(err: unknown, ...secrets: string[]): string {
@@ -190,9 +302,10 @@ export async function isApplicationErrorResponse(response: Response): Promise<bo
   return false;
 }
 
-function isInsufficientBalance(
+/** A settle failure decided at verify, before anything was sent: the next chain may be tried. */
+export function isInsufficientBalance(
   network: string,
-  failure: SettleResponse | undefined,
+  failure: Pick<SettleResponse, "errorReason"> | undefined,
 ): boolean {
   if (!failure) return false;
   const reason = failure.errorReason;
@@ -202,6 +315,11 @@ function isInsufficientBalance(
     return true;
   }
   return false;
+}
+
+/** A settle failure the facilitator also reports after the transaction went out. */
+export function mayHaveBeenSent(network: string, failure: Pick<SettleResponse, "errorReason"> | undefined): boolean {
+  return network === SOLANA_NETWORK_ID && MAYBE_SENT_SOLANA_FAILURE_REASONS.has(failure?.errorReason ?? "");
 }
 
 function readRequiredAtomicAmount(req: PaymentRequirements): bigint | null {
@@ -387,7 +505,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
     required: PaymentRequired,
     originalRequest: Request,
     baseFetch: typeof globalThis.fetch,
-  ): Promise<{ response: Response; failure?: SettleResponse; networkError?: string }> {
+  ): Promise<{ response: Response; failure?: SettleResponse; networkError?: string; neverSent?: boolean }> {
     const single: PaymentRequired = { ...required, accepts: [req] };
     const payload = await client.createPaymentPayload(single);
     const headers = httpClient.encodePaymentSignatureHeader(payload);
@@ -406,6 +524,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
       return {
         response: new Response(null, { status: 599 }),
         networkError: sanitizeReason(err),
+        neverSent: failedBeforeSending(err),
       };
     }
     if (response.ok) return { response };
@@ -413,15 +532,12 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
     return { response, failure };
   }
 
-  async function attemptTempoPayment(
-    firstResponse: Response,
-    originalRequest: Request,
-    baseFetch: typeof globalThis.fetch,
-  ): Promise<Response> {
+  /** The request again, carrying a signed MPP credential for Tempo. Nothing is sent here. */
+  async function tempoRequest(firstResponse: Response, originalRequest: Request): Promise<Request> {
     const credential = await mppx.createCredential(firstResponse.clone());
     const retryReq = originalRequest.clone();
     retryReq.headers.set("Authorization", credential);
-    return baseFetch(retryReq);
+    return retryReq;
   }
 
   const baseFetch: typeof globalThis.fetch = globalThis.fetch.bind(globalThis);
@@ -493,7 +609,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
         }
       }
 
-      const { response, failure, networkError } = await attemptX402Payment(
+      const { response, failure, networkError, neverSent } = await attemptX402Payment(
         req,
         paymentRequired,
         savedRequest,
@@ -505,9 +621,23 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
         return response;
       }
 
+      // From here a signed payment for this chain may have reached the API. The next chain signs a
+      // NEW authorization with its own nonce, so falling through is only safe when this one is known
+      // not to have settled. Each case below says why it is, or stops (SYNLBS-272).
+      const payer = label === "solana" ? solanaAddress : evmAddress;
+
       if (networkError) {
-        attempts.push({ network, reason: `network error: ${networkError}` });
-        continue;
+        // Safe only when the connection was never made: the payment never left this machine.
+        if (neverSent) {
+          attempts.push({ network, reason: `network error before the payment was sent: ${networkError}` });
+          continue;
+        }
+        throw new PaymentOutcomeUnknownError({
+          network,
+          payer,
+          reason: `the connection failed after the signed payment was sent: ${networkError}`,
+          attempts,
+        });
       }
 
       // Payment went through but the API answered with an application
@@ -518,6 +648,7 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
         return response;
       }
 
+      // Safe: refused at verify (the balance checks, Solana's simulation), before anything was sent.
       if (isInsufficientBalance(network, failure)) {
         attempts.push({
           network,
@@ -527,14 +658,49 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
       }
 
       if (failure === undefined) {
-        // Ambiguous response (unparseable settle body) — don't surface, the next
-        // chain might succeed. x402/MPP both use nonce-style replay protection,
-        // so an already-settled payment won't double-charge.
-        attempts.push({
+        // Safe: a 402 is the API refusing the payment and asking again, which it does only when
+        // nothing was captured (no matching requirement, verify refused, settle refused).
+        if (response.status === 402) {
+          attempts.push({ network, reason: "payment refused (HTTP 402, no settlement response): nothing was settled" });
+          continue;
+        }
+        // Anything else with no settlement response (a gateway's 502/504, a 500 without the API's
+        // error body) can come after the API settled the payment, as the API settles before it
+        // answers. The next chain would pay a second time for one answer.
+        const evidence = paymentEvidence(response);
+        throw new PaymentOutcomeUnknownError({
           network,
-          reason: `unparseable settlement response (HTTP ${response.status})`,
+          payer: evidence.payer ?? payer,
+          ...evidence,
+          reason: `HTTP ${response.status} with no readable settlement response`,
+          attempts,
         });
-        continue;
+      }
+
+      // The settlement response says it settled, but the answer is an error with no API error body.
+      // Known to be paid: never pay again on another chain, and say it was paid.
+      if (failure.success === true) {
+        const evidence = paymentEvidence(response);
+        throw new PaymentOutcomeUnknownError({
+          network,
+          payer: evidence.payer ?? payer,
+          ...evidence,
+          settled: true,
+          reason: `HTTP ${response.status} after the settlement`,
+          attempts,
+        });
+      }
+
+      if (mayHaveBeenSent(network, failure)) {
+        const evidence = paymentEvidence(response);
+        throw new PaymentOutcomeUnknownError({
+          network,
+          payer: failure.payer || evidence.payer || payer,
+          ...evidence,
+          settled: undefined,
+          reason: `the facilitator answered ${failure.errorReason}, which it also answers when the transaction was sent and its confirmation timed out`,
+          attempts,
+        });
       }
 
       // Known, non-balance failure (signature/nonce/server error). Don't retry —
@@ -573,19 +739,55 @@ export async function createPaidFetch(config: FetchConfig): Promise<PaidFetchRes
             `[syntalic-mcp] Tempo balance pre-check unavailable (${check.error}); attempting payment.`,
           );
         }
+        let retryReq: Request | undefined;
         try {
-          const response = await attemptTempoPayment(firstResponse, savedRequest, baseFetch);
-          if (response.ok) {
-            traceSettled(savedRequest.url, TEMPO_LABEL, response);
-            return response;
-          }
-          const reason = await extractTempoFailureReason(response);
-          attempts.push({ network: TEMPO_LABEL, reason: `tempo payment failed: ${reason}` });
+          retryReq = await tempoRequest(firstResponse, savedRequest);
         } catch (err) {
           attempts.push({
             network: TEMPO_LABEL,
             reason: `tempo credential failed: ${sanitizeReason(err)}`,
           });
+        }
+        if (retryReq) {
+          let response: Response | undefined;
+          try {
+            response = await baseFetch(retryReq);
+          } catch (err) {
+            // Tempo is the last chain, so nothing would pay twice here; what matters is not telling
+            // the user a payment failed when it may have gone through.
+            if (!failedBeforeSending(err)) {
+              throw new PaymentOutcomeUnknownError({
+                network: TEMPO_LABEL,
+                payer: evmAddress,
+                reason: `the connection failed after the signed payment was sent: ${sanitizeReason(err)}`,
+                attempts,
+              });
+            }
+            attempts.push({
+              network: TEMPO_LABEL,
+              reason: `network error before the payment was sent: ${sanitizeReason(err)}`,
+            });
+          }
+          if (response?.ok) {
+            traceSettled(savedRequest.url, TEMPO_LABEL, response);
+            return response;
+          }
+          if (response) {
+            // MPP settles before the API answers: an application error was paid for, as on x402.
+            if (await isApplicationErrorResponse(response)) return response;
+            if (response.status !== 402) {
+              const evidence = paymentEvidence(response);
+              throw new PaymentOutcomeUnknownError({
+                network: TEMPO_LABEL,
+                payer: evmAddress,
+                ...evidence,
+                reason: `HTTP ${response.status} without the API's error body`,
+                attempts,
+              });
+            }
+            const reason = await extractTempoFailureReason(response);
+            attempts.push({ network: TEMPO_LABEL, reason: `tempo payment failed: ${reason}` });
+          }
         }
       }
     }
