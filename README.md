@@ -7,7 +7,7 @@ MCP server that gives AI agents access to real-time competitive pricing data acr
 ### Option A — Let the MCP manage a wallet (recommended for most users)
 
 ```bash
-npx @syntalic/mcp-server --setup
+npx @syntalic/mcp-server@latest --setup
 ```
 
 This walks you through:
@@ -18,7 +18,7 @@ After setup:
 
 ```bash
 # Back up your private keys — mandatory before funding
-npx @syntalic/mcp-server --export-keys
+npx @syntalic/mcp-server@latest --export-keys
 
 # Fund any of the printed addresses with USDC (or USDC.e on Tempo) and you're ready
 ```
@@ -32,22 +32,33 @@ Skip the generated wallet and supply keys yourself. Recommended if you already u
 export SYNTALIC_EVM_PRIVATE_KEY=0x<your_evm_private_key>
 export SYNTALIC_SOLANA_PRIVATE_KEY=<your_solana_base58_private_key>
 
-# Still run --setup to wire Claude Code (it won't touch the wallet file when both env vars are set)
-npx @syntalic/mcp-server --setup
+# Still run --setup to wire Claude Code. With both env vars set it creates no wallet file and prints no
+# addresses to fund: the server pays from your keys.
+npx @syntalic/mcp-server@latest --setup
 ```
 
-When both env vars are set, `~/.syntalic/wallet.json` is ignored entirely.
+When both env vars are set, `~/.syntalic/wallet.json` is ignored entirely, and `--setup` neither creates it
+nor shows its addresses. `--info` shows the addresses your keys pay from, and their balances.
 
 > ⚠️ Do not use your primary wallet here. Use a dedicated low-balance "agent wallet" — per-query amounts are tiny (0.01–0.02 USDC), so a few dollars buys hundreds of queries.
 
 ### Manual MCP config
+
+Claude Code (what `--setup` runs for you; Claude Code does not read MCP servers from
+`~/.claude/settings.json`):
+
+```bash
+claude mcp add -s user syntalic -- npx -y @syntalic/mcp-server@latest
+```
+
+Other clients that take an `mcpServers` file:
 
 ```json
 {
   "mcpServers": {
     "syntalic": {
       "command": "npx",
-      "args": ["-y", "@syntalic/mcp-server"]
+      "args": ["-y", "@syntalic/mcp-server@latest"]
     }
   }
 }
@@ -283,7 +294,7 @@ pricing and shelf tools return means, are one resource each:
 | prompts | `position-on-shelf`, `diagnose-price-move`, `promo-pressure`, `retail-coverage`, `category-brief`, `buyer-pitch` |
 | resources | `syntalic://ontology/rules`, `syntalic://ontology/metrics` (each figure's definition, the tool and field that return it, and when it is withheld), `syntalic://playbooks` (the index), `syntalic://playbooks/<name>` |
 
-The playbooks are rendered from the same sources the Syntalic dashboard agent reads, so the two give the
+The playbooks are rendered from the same sources Synthia, the dashboard agent, reads, so the two give the
 same advice; the metric definitions are rendered from the Syntalic repository's metric registry
 (`shared/pricing-canon/data/metrics.json`). `src/playbooks.generated.ts` is generated; edit it only by
 re-vendoring (see below).

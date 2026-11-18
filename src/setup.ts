@@ -216,6 +216,25 @@ export async function runSetup(opts: SetupOptions = {}) {
     console.log("  ───────────────────────────────────");
     console.log("");
 
+    // Both key env vars set: the server pays from them and never reads the wallet file (index.ts).
+    // Creating one here, or showing its addresses, would have the user fund a wallet nothing spends.
+    const evmVar = readEnv("EVM_PRIVATE_KEY");
+    const solanaVar = readEnv("SOLANA_PRIVATE_KEY");
+    if (evmVar.value && solanaVar.value) {
+      console.log(`  Using your own keys: ${evmVar.name} and ${solanaVar.name} are both set.`);
+      console.log("  The server pays from them, so setup creates no wallet file and shows no addresses to fund.");
+      if (walletFileExists()) console.log(`  The wallet file at ${WALLET_FILE} is not used while both are set.`);
+      console.log("  Run --info to see the addresses these keys pay from, and their balances.");
+      await configureClaudeCode(rl, opts);
+      return;
+    }
+    if (evmVar.value || solanaVar.value) {
+      const [set, missing] = evmVar.value ? [evmVar.name, solanaVar.name] : [solanaVar.name, evmVar.name];
+      console.log(`  Note: ${set} is set but ${missing} is not. The server refuses to start`);
+      console.log("  with only one: set both to use your own keys, or unset it to use a wallet file.");
+      console.log("");
+    }
+
     // Fresh install: offer BYO path before creating a wallet file we may not need.
     if (!walletFileExists()) {
       console.log("  No wallet found. How do you want to set up?");
@@ -255,7 +274,7 @@ export async function runSetup(opts: SetupOptions = {}) {
     if (isNew || !wallet.backupAcknowledgedAt) {
       console.log("");
       console.log("  ⚠️  Back up your keys before funding. Run:");
-      console.log("        npx @syntalic/mcp-server --export-keys");
+      console.log("        npx @syntalic/mcp-server@latest --export-keys");
       console.log(
         "     If this machine loses the wallet file without a backup, funds",
       );
@@ -432,6 +451,20 @@ async function addressesFromKeys(evmKey: string, solanaKey: string): Promise<{ e
   };
 }
 
+/** What `--setup` hands `claude`: the server registered at user scope, as `@latest` so npx fetches the
+ *  current release instead of running whatever version it cached first. */
+export const CLAUDE_MCP_ADD_ARGS: readonly string[] = [
+  "mcp",
+  "add",
+  "-s",
+  "user",
+  "syntalic",
+  "--",
+  "npx",
+  "-y",
+  "@syntalic/mcp-server@latest",
+];
+
 async function configureClaudeCode(rl: Prompter, opts: SetupOptions) {
   console.log("");
   // No answer (stdin closed: a script or an agent) is a "no": running `claude mcp add` is a change
@@ -442,29 +475,14 @@ async function configureClaudeCode(rl: Prompter, opts: SetupOptions) {
       ? "y"
       : ((await rl.ask("  Auto-configure Claude Code? (Y/n): ")) ?? "n");
 
-  const claudeArgs = [
-    "mcp",
-    "add",
-    "-s",
-    "user",
-    "syntalic",
-    "--",
-    "npx",
-    "-y",
-    "@syntalic/mcp-server",
-  ];
+  const claudeArgs = CLAUDE_MCP_ADD_ARGS;
   const cmdString = "claude " + claudeArgs.join(" ");
 
   if (configureClaude.toLowerCase() === "n") {
+    // Claude Code does not read MCP servers from ~/.claude/settings.json, so the snippet once
+    // printed here added nothing. `claude mcp add` is the way in.
     console.log("");
-    console.log("  Add this to ~/.claude/settings.json under mcpServers:");
-    console.log("");
-    console.log('    "syntalic": {');
-    console.log('      "command": "npx",');
-    console.log('      "args": ["-y", "@syntalic/mcp-server"]');
-    console.log("    }");
-    console.log("");
-    console.log("  Or run this later:");
+    console.log("  To add the server to Claude Code later, run:");
     console.log("    " + cmdString);
     console.log("");
     return;

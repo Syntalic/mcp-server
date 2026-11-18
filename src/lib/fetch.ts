@@ -73,7 +73,7 @@ export class PaymentError extends Error {
     super(
       `Payment failed across all supported chains (${detail}). ` +
         `Fund one of your wallets and retry. Run the \`wallet_info\` tool to see addresses. ` +
-        `If you haven't already, run \`npx @syntalic/mcp-server --export-keys\` in your ` +
+        `If you haven't already, run \`npx @syntalic/mcp-server@latest --export-keys\` in your ` +
         `terminal to back up your private keys — losing ~/.syntalic/wallet.json without a backup ` +
         `means losing any funds you add.`,
     );
