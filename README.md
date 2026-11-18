@@ -142,7 +142,7 @@ Understand the shape and coverage of the catalog before spending on a paid query
 | `browse_categories` | Category tree with per-node product counts |
 | `list_retailers` | Retailers (platforms) with product counts, countries, freshness |
 | `list_brands` | Brands with product counts (optional `q` prefix filter) |
-| `coverage_map` | Where the catalog is deep vs thin — quality status per retailer × country × category |
+| `coverage_map` | Where the catalog is deep vs thin — quality status (`serving`, `thin`, `stale`) per retailer × country × category |
 
 ### Utility (free)
 
@@ -187,6 +187,18 @@ measure_promotions { subject: "grocery", by: "retailer" }
   the API and a call costs what the route costs. The API's own `/v1/measures/*` paths are not used.
 - A `by` the measure does not have, a subject the split cannot take, or a `by` that could be about two
   things with nothing to say which, is refused by the server before any request is made.
+- So is an argument the chosen split's route does not read. A tool's schema is the union of its splits'
+  parameters, so `sort_by` on `measure_prices` by `band` looks valid; sent, the API would drop it and answer
+  a wider question at full price. The refusal names what the route reads and which split reads the
+  argument. What a route reads comes from the generated table, less `UNREAD_PARAMS` in `src/measures.ts`:
+  parameters the API's spec declares but its code does not read (today `time_window` on
+  `/v1/shopper/price-history` and `/v1/shopper/price-drop-alert`; a product's history takes `from` and
+  `to`). `npm run check:parity` lists them on every run.
+- `suggested_next_calls` in an answer name the per-route tools (`share_of_shelf`), which are not tools in
+  this mode. Each is rewritten to the measure tool, `by` and `subject` that make the same request, with
+  `args` for the rest, read off the generated table and kept only if it translates back to the exact route
+  and arguments the API suggested. One that cannot be mapped keeps what the API sent and gains
+  `callable: false` and a `note`. With `SYNTALIC_TOOLS=routes`, `tool` is the registered per-route tool.
 - 17 tools in place of 40, and a tool list a third smaller: 32,815 characters of tool definitions against
   49,387 (about 8.2k tokens against 12.3k).
 - A split whose route the production API does not serve yet is not offered: its `by` is left out of the
@@ -399,9 +411,13 @@ unreachable from any agent.
   called in a loop). It gates `npm publish`.
 - `npm run check:parity` hits the live `/openapi.json` and diffs both ways. It is
   the only check that catches a route shipping in the API with no tool. **Run it
-  before publishing.** It also checks the id parameters: where the spec declares
-  `spt`, `gpc`, `brand_id` or `entity_uid` on an operation, the tool must pass it
-  through. While the API's ontology is closed (neither `ONTOLOGY_ENABLED` nor
+  before publishing.** A route a live measure split reaches has a tool (the five only
+  the measures reach are named), and the API's own `/v1/measures/<name>` paths are
+  covered by the measure of that name, so a measure the API adds fails it. It also
+  checks the id parameters: where the spec declares `spt`, `gpc`, `brand_id` or
+  `entity_uid` on an operation, the tool must pass it through, and a measure split
+  must list it (or the generated table is stale). The per-route social and scout
+  tools take a category name only, as in 0.12.x; those gaps are in `KNOWN_GAPS`. While the API's ontology is closed (neither `ONTOLOGY_ENABLED` nor
   `ONTOLOGY_API_KEYS` set) the spec lists no `/v1/ontology/*` route; the check says so and does not fail, but then it
   has no id parameters to compare, so run it again once the API opens. To check
   against a saved spec instead of the network: `SYNTALIC_SPEC_FILE=spec.json npm run check:parity`.

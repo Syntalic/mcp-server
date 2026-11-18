@@ -6,6 +6,7 @@ import { createPaidFetch, PaymentError, PaymentOutcomeUnknownError } from "./lib
 import { formatBalances, readBalances } from "./lib/balances.js";
 import { registerGuidance, SERVER_INSTRUCTIONS } from "./guidance.js";
 import { MEASURE_INSTRUCTIONS, NOT_LIVE, registerMeasureTools } from "./measures.js";
+import { measureHint, rewriteNextCalls, routeHint } from "./next-calls.js";
 import {
   countrySchema,
   retailerSchema,
@@ -126,12 +127,19 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   // With the measure tools on (the default), the per-route paid tools below are not registered: the measures reach the
   // same routes, and offering both would double the list a model reads on every turn. The registrations
-  // stay as they are (the parity checks read this file); only the free tools get through.
-  if (measures) {
+  // stay as they are (the parity checks read this file); only the free tools get through. Either way the
+  // names registered are kept, so a suggested next call can be checked against them (next-calls.ts).
+  const registered = new Set<string>();
+  {
     const register = server.tool.bind(server) as (...args: unknown[]) => unknown;
-    (server as unknown as { tool: (...args: unknown[]) => unknown }).tool = (...args: unknown[]) =>
-      FREE_TOOLS.has(String(args[0])) ? register(...args) : undefined;
+    (server as unknown as { tool: (...args: unknown[]) => unknown }).tool = (...args: unknown[]) => {
+      const name = String(args[0]);
+      if (measures && !FREE_TOOLS.has(name)) return undefined;
+      registered.add(name);
+      return register(...args);
+    };
   }
+  const rewriteHint = measures ? measureHint : (hint: Record<string, unknown>) => routeHint(hint, registered);
 
   // createPaidFetch validates both keys (throws a helpful error on malformed input)
   // and returns the derived addresses, so we don't redo the parsing here.
@@ -264,7 +272,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       };
     }
 
-    const data = await res.json();
+    // Passed through as the API sent it, but for `suggested_next_calls`, which name the per-route
+    // tools: each is rewritten to a tool this server offers, or marked as not callable.
+    const data = rewriteNextCalls(await res.json(), rewriteHint);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(data, null, opts.compact ? undefined : 2) }],
     };
@@ -370,13 +380,13 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
 
   server.tool(
     "coverage_map",
-    "See where the catalog is deep vs thin: priced product counts and a quality status (serving/thin/unmanaged/empty) per retailer × country × category. FREE — no payment. Use this to check whether a paid query will hit good data before you spend. Filter by country, platform, category_root, or quality_status.",
+    "See where the catalog is deep vs thin: priced product counts and a quality status per retailer × country × category: serving, thin or stale (from shelf volume and 90-day freshness). FREE — no payment. Use this to check whether a paid query will hit good data before you spend. Filter by country, platform, category_root, or quality_status.",
     {
       country: countrySchema,
       platform: z.string().optional().describe("Filter to a platform (e.g. amazon, walmart)"),
       category_root: z.string().optional().describe("Filter to a top-level category (e.g. electronics)"),
       quality_status: z
-        .enum(["serving", "thin", "unmanaged", "empty"])
+        .enum(["serving", "thin", "stale"])
         .optional()
         .describe("Filter to a coverage tier"),
       limit: z.number().int().min(1).max(1000).optional().describe("Page size (default 200)"),
@@ -1184,11 +1194,9 @@ export async function createServer(config: ServerConfig): Promise<McpServer> {
       }),
   );
 
-  if (measures) {
-    // Past the filter above: registered on the prototype's own method.
-    delete (server as unknown as { tool?: unknown }).tool;
-    registerMeasureTools(server, query, annotationsFor);
-  }
+  // Past the filter above: the measure tools, and anything registered later, use the prototype's own method.
+  delete (server as unknown as { tool?: unknown }).tool;
+  if (measures) registerMeasureTools(server, query, annotationsFor);
 
   // Prompts (the playbooks) and resources (the rules, the playbook index): guidance an agent can
   // pull, rendered from the same sources Eve reads (shared/playbooks in the Syntalic repo).
