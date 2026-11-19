@@ -118,7 +118,7 @@ if (envEvmKey && envSolanaKey) {
       "  Fund any chain — the client auto-picks the one with balance per query.",
       "  Saved to: ~/.syntalic/wallet.json",
       "",
-      "  Run `npx @syntalic/mcp-server --export-keys` in your terminal to back",
+      "  Run `npx @syntalic/mcp-server@latest --export-keys` in your terminal to back",
       "  up your private keys before funding.",
       "",
     ].join("\n"));
@@ -140,7 +140,7 @@ if (envEvmKey && envSolanaKey) {
       "  deleted or lost, any USDC funded to your addresses becomes unrecoverable.",
       "",
       "  Run this in your terminal to view and save your keys:",
-      "    npx @syntalic/mcp-server --export-keys",
+      "    npx @syntalic/mcp-server@latest --export-keys",
       "",
       "  This warning goes away once you've run --export-keys at least once.",
       "",

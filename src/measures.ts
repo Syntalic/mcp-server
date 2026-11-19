@@ -45,6 +45,25 @@ export const NOT_LIVE: Readonly<Record<string, string>> = {
   "/v1/analyst/inflation": "INFLATION_ENABLED (off in production since 2026-11-16, too little price history; the route answers 404)",
 };
 
+/**
+ * Parameters a route's OpenAPI entry declares but its validator does not read. The generated table
+ * reads the spec, so it lists these as read; a measure call that sends one is refused as if the table
+ * did not list it, since the API would drop it and answer a wider question than the one asked, at full
+ * price. Each entry is a gap between the API's spec and its code: remove it once the API reads the
+ * parameter or stops declaring it. `npm run check:parity` lists the entries on every run.
+ */
+export const UNREAD_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "/v1/shopper/price-drop-alert": {
+    time_window: "price-drop-alert reads lookback_days, not time_window",
+  },
+};
+
+/** The parameters a split's route reads: the generated table's list, less UNREAD_PARAMS. */
+export function paramsRead(split: MeasureSplit): string[] {
+  const unread = UNREAD_PARAMS[split.route] ?? {};
+  return split.params.filter((p) => !(p in unread));
+}
+
 /** A measure with its not-live splits taken out, its parameters cut to what the remaining splits read,
  *  and its default moved to the first remaining split if its own was taken out. Null when none remain. */
 export function liveMeasure(measure: MeasureDef, notLive: Readonly<Record<string, string>> = NOT_LIVE): MeasureDef | null {
@@ -116,6 +135,29 @@ export type Translation =
 
 const FREE = "Nothing was called or billed.";
 
+/** `by period (a product)`, or `by drop` when no other split shares the `by`. */
+function splitName(split: MeasureSplit): string {
+  return `by ${split.by}${split.about ? ` (a ${split.about})` : ""}`;
+}
+
+/** The refusal for parameters a split's route does not read: which they are, what the route does
+ *  read, and which splits read each of them. */
+function unreadMessage(measure: MeasureDef, split: MeasureSplit, unread: string[]): string {
+  const tool = measureToolName(measure.name);
+  const notes = unread.map((name) => UNREAD_PARAMS[split.route]?.[name]).filter((n): n is string => !!n);
+  const elsewhere = unread.map((name) => {
+    const by = measure.splits.filter((s) => s !== split && paramsRead(s).includes(name)).map(splitName);
+    return by.length ? `${name} is read ${by.join(", ")}` : `no split of ${tool} reads ${name}`;
+  });
+  return (
+    `${tool} ${splitName(split)} is answered by ${split.route}, which does not read ${unread.join(", ")}` +
+    (notes.length ? ` (${notes.join("; ")})` : "") +
+    `. The API would drop ${unread.length > 1 ? "them" : "it"} and answer a wider question. ` +
+    `It reads: ${paramsRead(split).join(", ")}. ${elsewhere.join("; ")}. ` +
+    `Leave ${unread.length > 1 ? "them" : "it"} out, or change by. ${FREE}`
+  );
+}
+
 function kindsOf(split: MeasureSplit): string[] {
   const kinds = Object.keys(split.subject).map((k) => `${k}:`);
   if (split.name) kinds.push("a name");
@@ -177,12 +219,14 @@ export function translate(
   }
   if (!split) return { ok: false, message: `Unknown by "${by}" for ${measure.name}. ${FREE}` };
 
-  // Only what the route reads is sent to it. An argument that belongs to
-  // another split of the measure is dropped here, not left for the API to
-  // ignore, or to refuse once it rejects parameters it does not know.
-  const reads = new Set(split.params);
-  const params: QueryParams = {};
-  for (const [name, value] of Object.entries(sent)) if (reads.has(name)) params[name] = value;
+  // A tool offers the union of its splits' parameters, so one this split's route does not read looks
+  // valid. Sent, the API drops it and answers a wider question than the one asked, at full price
+  // (SYNLBS-266: time_window on a product's history). So it is refused here, free, with the split
+  // that reads it. What a route reads comes from the generated table, so this follows the API.
+  const reads = new Set(paramsRead(split));
+  const unread = Object.keys(sent).filter((name) => !reads.has(name));
+  if (unread.length > 0) return { ok: false, message: unreadMessage(measure, split, unread) };
+  const params: QueryParams = { ...sent };
 
   if (ownSubject) {
     params.subject = subject || undefined;
@@ -282,7 +326,9 @@ export const MEASURE_INSTRUCTIONS =
   "a brand, category, product type, retailer or product, call measure_resolve once per conversation (one concept " +
   "per term) and use the ids it returns as `subject`. A name that fits several things returns all of them as " +
   "co-equals: never pick one silently. Say 'not seen at X' only when X is in retailers_scanned. A malformed " +
-  "request is refused before anything is billed. The playbook prompts and the resources syntalic://ontology/rules " +
+  "request, or an argument the chosen split does not read, is refused before anything is billed. Each entry in " +
+  "an answer's suggested_next_calls names the measure tool, by and subject to call, and args for the rest; one " +
+  "marked callable: false has no tool here. The playbook prompts and the resources syntalic://ontology/rules " +
   "and syntalic://ontology/metrics name tools by their route (price_positioning, ontology_resolve). Those are not " +
   "tools in this mode: each is a split of a measure, named in square brackets in that measure's description.";
 
@@ -292,6 +338,103 @@ export type MeasureQuery = (
   opts: { compact: boolean },
 ) => Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }>;
 
+/** A measure tool's input schema: `subject`, `by`, and every parameter its splits' routes read. */
+export function measureShape(measure: MeasureDef): Record<string, z.ZodTypeAny> {
+  const bys = [...new Set(measure.splits.map((s) => s.by))] as [string, ...string[]];
+  const shape: Record<string, z.ZodTypeAny> = {
+    subject: z
+      .string()
+      .optional()
+      .describe("What the question is about: an id from resolve (spt:, gpc:, brand:, retailer:, entity:) or a name."),
+    by: z.enum(bys).optional().describe(`How the answer is split. Default ${measure.default_by}.`),
+  };
+  for (const p of measure.params) {
+    if (p.name in shape) continue;
+    shape[p.name] = paramSchema(p);
+  }
+  return shape;
+}
+
+/** A call the API suggests next (`suggested_next_calls`): a route and its query arguments. */
+export interface RouteCall {
+  route: string;
+  args: Record<string, string | string[]>;
+}
+
+/** The measure tool call that reaches a suggested route call with the same arguments. */
+export interface MeasureCall {
+  tool: string;
+  by: string;
+  subject?: string;
+  /** The tool's other arguments, typed as its schema takes them. */
+  args: Record<string, unknown>;
+}
+
+/** A query's parameters as one string or a list, for comparing two of them. */
+function sameQuery(a: QueryParams, b: QueryParams): boolean {
+  const norm = (q: QueryParams) =>
+    JSON.stringify(
+      Object.entries(q)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, Array.isArray(v) ? v.map(String) : String(v)])
+        .sort(([x], [y]) => String(x).localeCompare(String(y))),
+    );
+  return norm(a) === norm(b);
+}
+
+/**
+ * The measure tool, `by` and `subject` that make the same request as a route call the API suggested,
+ * or null when no live split does. Read off the generated table (route to split, where a subject of
+ * each kind goes, each parameter's type) and checked by translating the result back: it is offered
+ * only if the tool would send exactly the route and arguments the API suggested.
+ */
+export function measureCallFor(call: RouteCall, measures: readonly MeasureDef[] = LIVE_MEASURES): MeasureCall | null {
+  const fits = (s: MeasureSplit) => Object.entries(s.fixed ?? {}).every(([k, v]) => call.args[k] === undefined || call.args[k] === v);
+  let options = measures.flatMap((m) => m.splits.filter((s) => s.route === call.route && fits(s)).map((s) => ({ m, s })));
+  // promo-intelligence is two splits, told apart by the aggregate_by each fixes. A call that names
+  // its aggregate_by is that split; one that does not gets the route's default, which is the measure's.
+  if (options.length > 1) {
+    const named = options.filter(({ s }) => Object.keys(s.fixed ?? {}).every((k) => call.args[k] !== undefined));
+    options = named.length > 0 ? named : options.filter(({ m, s }) => s.by === m.default_by);
+  }
+  if (options.length !== 1) return null;
+  const { m, s } = options[0]!;
+
+  // An argument the route does not read changes nothing there (the API ignores it: country=ca on a
+  // social route), so the tool call leaves it out rather than be refused for it.
+  const read = new Set(paramsRead(s));
+  const used = Object.fromEntries(Object.entries(call.args).filter(([k]) => read.has(k)));
+  const rest: Record<string, string | string[]> = { ...used };
+  for (const k of Object.keys(s.fixed ?? {})) delete rest[k];
+  let subject: string | undefined;
+  for (const [kind, target] of Object.entries(s.subject) as [SubjectKind, { param: string; as: "id" | "value" }][]) {
+    const v = rest[target.param];
+    if (typeof v !== "string") continue;
+    const id = target.as === "id" ? v : `${kind}:${v}`;
+    if (parseId(id)?.kind !== kind) continue;
+    subject = id;
+    delete rest[target.param];
+    break;
+  }
+
+  const args: Record<string, unknown> = {};
+  for (const [name, v] of Object.entries(rest)) {
+    const p = m.params.find((x) => x.name === name);
+    if (!p) return null;
+    const one = (x: string): unknown =>
+      p.type === "integer" || p.type === "number" ? Number(x) : p.type === "boolean" ? x === "true" : x;
+    args[name] = Array.isArray(v) ? v.map(one) : p.array ? [one(v)] : one(v);
+  }
+  const out: MeasureCall = { tool: measureToolName(m.name), by: s.by, ...(subject ? { subject } : {}), args };
+
+  // The proof: what the tool takes, and what it would send.
+  if (!z.object(measureShape(m)).safeParse({ by: out.by, subject: out.subject, ...args }).success) return null;
+  const back = translate(m, { by: out.by, subject: out.subject, ...args });
+  if (!back.ok || back.route !== call.route) return null;
+  if (!sameQuery(back.params, { ...used, ...(s.fixed ?? {}) })) return null;
+  return out;
+}
+
 /** Register one tool per measure. `query` is the server's paid fetch. */
 export function registerMeasureTools(
   server: McpServer,
@@ -299,20 +442,8 @@ export function registerMeasureTools(
   annotations: (name: string) => ToolAnnotations,
 ): void {
   for (const measure of LIVE_MEASURES) {
-    const bys = [...new Set(measure.splits.map((s) => s.by))] as [string, ...string[]];
-    const shape: Record<string, z.ZodTypeAny> = {
-      subject: z
-        .string()
-        .optional()
-        .describe("What the question is about: an id from resolve (spt:, gpc:, brand:, retailer:, entity:) or a name."),
-      by: z.enum(bys).optional().describe(`How the answer is split. Default ${measure.default_by}.`),
-    };
-    for (const p of measure.params) {
-      if (p.name in shape) continue;
-      shape[p.name] = paramSchema(p);
-    }
     const tool = measureToolName(measure.name);
-    server.tool(tool, describeMeasure(measure), shape, annotations(tool), async (args) => {
+    server.tool(tool, describeMeasure(measure), measureShape(measure), annotations(tool), async (args) => {
       const out = translate(measure, args as Record<string, unknown>);
       if (!out.ok) return { content: [{ type: "text" as const, text: out.message }], isError: true };
       return query(out.route, out.params, { compact: true });

@@ -239,12 +239,44 @@ describe("a measure call goes to the route its split names", () => {
     assert.deepEqual(seen[0]!.searchParams.getAll("term"), ["olipop", "poppi"]);
   });
 
-  it("sends the route only what it reads, not another split's arguments", async () => {
+  it("refuses, free, an argument the chosen split's route does not read (SYNLBS-266)", async () => {
     const client = await connect();
-    // sort_by and department belong to other splits of prices; price-bands reads neither.
-    await call(client, "prices", { by: "band", subject: "electronics/computers", sort_by: "price_asc", department: "Grocery" });
-    assert.equal(seen[0]!.pathname, "/v1/analyst/price-bands");
-    assert.deepEqual([...seen[0]!.searchParams.keys()], ["node"]);
+    // sort_by and department belong to other splits of prices; price-bands reads neither. Dropped,
+    // the call would answer a wider question than the one asked, at full price.
+    const res = await call(client, "prices", { by: "band", subject: "electronics/computers", sort_by: "price_asc", department: "Grocery" });
+    assert.equal(res.isError, true);
+    assert.equal(seen.length, 0);
+    assert.match(res.text, /measure_prices by band is answered by \/v1\/analyst\/price-bands, which does not read department, sort_by/);
+    assert.match(res.text, /sort_by is read by product/);
+    assert.match(res.text, /department is read by summary, by distribution, by retailer/);
+    assert.match(res.text, /Nothing was called or billed/);
+  });
+
+  it("takes time_window and lookback_days on a product's price history, as on a brand's (SYNLBS-259, SYNLBS-266)", async () => {
+    const client = await connect();
+    // The 2026-11-18 incident: price-history dropped time_window, the 30-day default applied, and a paid call
+    // answered 404, so UNREAD_PARAMS refused it. The API reads it since 2026-11-18 (#1659), and documents
+    // lookback_days, so both now go through.
+    const res = await call(client, "trend", { subject: "entity:85ab90654c05144e8d25fed106d73c35", time_window: "last_90_days" });
+    assert.equal(res.isError, false, res.text);
+    assert.equal(seen[0]!.pathname, "/v1/shopper/price-history");
+    assert.equal(seen[0]!.searchParams.get("time_window"), "last_90_days");
+    assert.equal(seen[0]!.searchParams.get("entity_uid"), "85ab90654c05144e8d25fed106d73c35");
+    const days = await call(client, "trend", { subject: "entity:85ab90654c05144e8d25fed106d73c35", lookback_days: 90 });
+    assert.equal(days.isError, false, days.text);
+    assert.equal(seen[1]!.searchParams.get("lookback_days"), "90");
+    const brand = await call(client, "trend", { subject: "brand:b_ac1a1c7143cb2199", time_window: "last_90_days" });
+    assert.equal(brand.isError, false, brand.text);
+    assert.equal(seen[2]!.pathname, "/v1/marketing/brand-tracker");
+    assert.equal(seen[2]!.searchParams.get("time_window"), "last_90_days");
+  });
+
+  it("takes from and to on a product's price history", async () => {
+    const client = await connect();
+    const res = await call(client, "trend", { subject: "entity:abc", from: "2026-08-01", to: "2026-11-01" });
+    assert.equal(res.isError, false, res.text);
+    assert.equal(seen[0]!.pathname, "/v1/shopper/price-history");
+    assert.equal(seen[0]!.search, "?from=2026-08-01&to=2026-11-01&entity_uid=abc");
   });
 
   it("takes any retailer, as the API and the per-route tools do", async () => {
@@ -274,6 +306,18 @@ describe("a measure call goes to the route its split names", () => {
     assert.equal(seen.length, 0);
   });
 
+  it("takes every channel the tactics route takes, not only email (SYNLBS-269)", async () => {
+    const client = await connect();
+    const tool = (await client.listTools()).tools.find((t) => t.name === measureToolName("signals"))!;
+    const channel = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).channel;
+    const nine = ["email", "retail", "supply", "brand_launch", "growth", "social", "site", "branding", "customer"];
+    assert.deepEqual([...(channel?.enum ?? [])].sort(), [...nine].sort());
+    const res = await call(client, "signals", { by: "practice", subject: "spt:fb-2-17-2-4", channel: "retail" });
+    assert.equal(res.isError, false, res.text);
+    assert.equal(seen[0]!.pathname, "/v1/social/tactics");
+    assert.equal(seen[0]!.searchParams.get("channel"), "retail");
+  });
+
   it("answers compactly: no indentation to pay tokens for", async () => {
     const client = await connect();
     assert.equal((await call(client, "coverage", { subject: "gpc:10008059" })).text, '{"ok":true}');
@@ -287,6 +331,19 @@ describe("a measure call goes to the route its split names", () => {
     assert.match(res.text, /can be about product, (shelf, )?brand/);
     assert.match(res.text, /Nothing was called or billed/);
     assert.equal(seen.length, 0);
+  });
+});
+
+describe("coverage_map", () => {
+  it("offers the quality statuses the API returns: serving, thin, stale (SYNLBS-266)", async () => {
+    const client = await connect();
+    const tool = (await client.listTools()).tools.find((t) => t.name === "coverage_map")!;
+    const status = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).quality_status;
+    assert.deepEqual(status?.enum, ["serving", "thin", "stale"]);
+    assert.match(tool.description ?? "", /serving, thin or stale/);
+    assert.doesNotMatch(tool.description ?? "", /unmanaged|empty/);
+    await client.callTool({ name: "coverage_map", arguments: { quality_status: "stale" } });
+    assert.equal(seen[0]!.searchParams.get("quality_status"), "stale");
   });
 });
 

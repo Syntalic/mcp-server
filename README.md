@@ -7,7 +7,7 @@ MCP server that gives AI agents access to real-time competitive pricing data acr
 ### Option A — Let the MCP manage a wallet (recommended for most users)
 
 ```bash
-npx @syntalic/mcp-server --setup
+npx @syntalic/mcp-server@latest --setup
 ```
 
 This walks you through:
@@ -18,7 +18,7 @@ After setup:
 
 ```bash
 # Back up your private keys — mandatory before funding
-npx @syntalic/mcp-server --export-keys
+npx @syntalic/mcp-server@latest --export-keys
 
 # Fund any of the printed addresses with USDC (or USDC.e on Tempo) and you're ready
 ```
@@ -32,22 +32,33 @@ Skip the generated wallet and supply keys yourself. Recommended if you already u
 export SYNTALIC_EVM_PRIVATE_KEY=0x<your_evm_private_key>
 export SYNTALIC_SOLANA_PRIVATE_KEY=<your_solana_base58_private_key>
 
-# Still run --setup to wire Claude Code (it won't touch the wallet file when both env vars are set)
-npx @syntalic/mcp-server --setup
+# Still run --setup to wire Claude Code. With both env vars set it creates no wallet file and prints no
+# addresses to fund: the server pays from your keys.
+npx @syntalic/mcp-server@latest --setup
 ```
 
-When both env vars are set, `~/.syntalic/wallet.json` is ignored entirely.
+When both env vars are set, `~/.syntalic/wallet.json` is ignored entirely, and `--setup` neither creates it
+nor shows its addresses. `--info` shows the addresses your keys pay from, and their balances.
 
 > ⚠️ Do not use your primary wallet here. Use a dedicated low-balance "agent wallet" — per-query amounts are tiny (0.01–0.02 USDC), so a few dollars buys hundreds of queries.
 
 ### Manual MCP config
+
+Claude Code (what `--setup` runs for you; Claude Code does not read MCP servers from
+`~/.claude/settings.json`):
+
+```bash
+claude mcp add -s user syntalic -- npx -y @syntalic/mcp-server@latest
+```
+
+Other clients that take an `mcpServers` file:
 
 ```json
 {
   "mcpServers": {
     "syntalic": {
       "command": "npx",
-      "args": ["-y", "@syntalic/mcp-server"]
+      "args": ["-y", "@syntalic/mcp-server@latest"]
     }
   }
 }
@@ -71,16 +82,36 @@ When both env vars are set, `~/.syntalic/wallet.json` is ignored entirely.
 | x402 | **Base** | USDC | EVM (`0x...`) |
 | MPP | **Tempo** | USDC.e | EVM (`0x...`) |
 
-Base and Tempo share the same EVM address. Solana uses a separate keypair. The client tries chains in that order (Solana first — lowest fees) and falls through when a chain doesn't have enough balance.
+Base and Tempo share the same EVM address. Solana uses a separate keypair. The client tries chains in that order (Solana first — lowest fees) and moves to the next one only when nothing was paid on the one before (see Smart Routing).
 
 ## Smart Routing
 
 On every query, the client:
 
 1. Derives your Solana USDC ATA and checks balance via public RPC. Enough → pay on Solana. Not enough, or the balance could not be read → skip.
-2. Attempts payment on Base. Falls through on insufficient-balance errors only.
+2. Attempts payment on Base.
 3. Checks USDC.e balance on Tempo, signs an MPP receipt, retries.
 4. All chains exhausted → throws a clear `PaymentError` listing what happened per chain.
+
+It moves on from a chain only when nothing was paid there:
+
+- the chain was skipped before anything was signed (a `SYNTALIC_PAYMENT_NETWORK` pin, a balance
+  pre-check, an unreadable Solana balance);
+- the API refused the payment at verify for its balance (`invalid_exact_evm_insufficient_balance`,
+  `permit2_insufficient_balance`, Solana's `transaction_simulation_failed`);
+- the API answered `402` again with no settlement response: it asks again only when nothing was captured;
+- the connection was never made (refused, DNS, connect timeout), so the payment never left the machine.
+
+Once a signed payment may have reached the API, the client stops on that chain. The next chain would
+sign a new authorization with its own nonce, so if the first one settled, the call would be paid twice.
+A gateway error with no settlement response (a `502` or `504`), a connection that drops after the request
+went out, Solana's `transaction_failed` (which the facilitator also answers when the transaction was sent
+and its confirmation timed out), or a settlement response that says the payment settled followed by an
+error: the tool says the payment's outcome is unknown (or that it settled), with what is known (the
+chain, the payer, the HTTP status, the transaction or receipt, the request id), and tries no other
+chain. Check the balance or the transaction before calling again. An answer from the API itself after
+payment, such as `404 NO_RESULTS`, is returned as the answer, and any other refusal with a reason (a bad
+signature, a used nonce) stops with a `PaymentError`.
 
 The Solana check fails closed: the public Solana RPC rate-limits often, and an unreadable balance is
 skipped (the `PaymentError` says so) rather than attempted, so a rate-limited RPC never turns into an
@@ -111,7 +142,7 @@ Understand the shape and coverage of the catalog before spending on a paid query
 | `browse_categories` | Category tree with per-node product counts |
 | `list_retailers` | Retailers (platforms) with product counts, countries, freshness |
 | `list_brands` | Brands with product counts (optional `q` prefix filter) |
-| `coverage_map` | Where the catalog is deep vs thin — quality status per retailer × country × category |
+| `coverage_map` | Where the catalog is deep vs thin — quality status (`serving`, `thin`, `stale`) per retailer × country × category |
 
 ### Utility (free)
 
@@ -156,6 +187,18 @@ measure_promotions { subject: "grocery", by: "retailer" }
   the API and a call costs what the route costs. The API's own `/v1/measures/*` paths are not used.
 - A `by` the measure does not have, a subject the split cannot take, or a `by` that could be about two
   things with nothing to say which, is refused by the server before any request is made.
+- So is an argument the chosen split's route does not read. A tool's schema is the union of its splits'
+  parameters, so `sort_by` on `measure_prices` by `band` looks valid; sent, the API would drop it and answer
+  a wider question at full price. The refusal names what the route reads and which split reads the
+  argument. What a route reads comes from the generated table, less `UNREAD_PARAMS` in `src/measures.ts`:
+  parameters the API's spec declares but its code does not read (today `time_window` on
+  `/v1/shopper/price-history` and `/v1/shopper/price-drop-alert`; a product's history takes `from` and
+  `to`). `npm run check:parity` lists them on every run.
+- `suggested_next_calls` in an answer name the per-route tools (`share_of_shelf`), which are not tools in
+  this mode. Each is rewritten to the measure tool, `by` and `subject` that make the same request, with
+  `args` for the rest, read off the generated table and kept only if it translates back to the exact route
+  and arguments the API suggested. One that cannot be mapped keeps what the API sent and gains
+  `callable: false` and a `note`. With `SYNTALIC_TOOLS=routes`, `tool` is the registered per-route tool.
 - 17 tools in place of 40, and a tool list a third smaller: 32,815 characters of tool definitions against
   49,387 (about 8.2k tokens against 12.3k).
 - A split whose route the production API does not serve yet is not offered: its `by` is left out of the
@@ -283,7 +326,7 @@ pricing and shelf tools return means, are one resource each:
 | prompts | `position-on-shelf`, `diagnose-price-move`, `promo-pressure`, `retail-coverage`, `category-brief`, `buyer-pitch` |
 | resources | `syntalic://ontology/rules`, `syntalic://ontology/metrics` (each figure's definition, the tool and field that return it, and when it is withheld), `syntalic://playbooks` (the index), `syntalic://playbooks/<name>` |
 
-The playbooks are rendered from the same sources the Syntalic dashboard agent reads, so the two give the
+The playbooks are rendered from the same sources Synthia, the dashboard agent, reads, so the two give the
 same advice; the metric definitions are rendered from the Syntalic repository's metric registry
 (`shared/pricing-canon/data/metrics.json`). `src/playbooks.generated.ts` is generated; edit it only by
 re-vendoring (see below).
@@ -368,9 +411,13 @@ unreachable from any agent.
   called in a loop). It gates `npm publish`.
 - `npm run check:parity` hits the live `/openapi.json` and diffs both ways. It is
   the only check that catches a route shipping in the API with no tool. **Run it
-  before publishing.** It also checks the id parameters: where the spec declares
-  `spt`, `gpc`, `brand_id` or `entity_uid` on an operation, the tool must pass it
-  through. While the API's ontology is closed (neither `ONTOLOGY_ENABLED` nor
+  before publishing.** A route a live measure split reaches has a tool (the five only
+  the measures reach are named), and the API's own `/v1/measures/<name>` paths are
+  covered by the measure of that name, so a measure the API adds fails it. It also
+  checks the id parameters: where the spec declares `spt`, `gpc`, `brand_id` or
+  `entity_uid` on an operation, the tool must pass it through, and a measure split
+  must list it (or the generated table is stale). The per-route social and scout
+  tools take a category name only, as in 0.12.x; those gaps are in `KNOWN_GAPS`. While the API's ontology is closed (neither `ONTOLOGY_ENABLED` nor
   `ONTOLOGY_API_KEYS` set) the spec lists no `/v1/ontology/*` route; the check says so and does not fail, but then it
   has no id parameters to compare, so run it again once the API opens. To check
   against a saved spec instead of the network: `SYNTALIC_SPEC_FILE=spec.json npm run check:parity`.
@@ -379,7 +426,10 @@ unreachable from any agent.
   id parameters on the paid tools, the annotations, the prompts and the resources.
 - `src/measures.generated.ts` is vendored from the Syntalic repository
   (`shared/measures/mcp/measures.generated.ts`; `npx tsx scripts/export-measures.ts` in `api/` renders it
-  from the API's measure registry and its OpenAPI document; copy it here). Do not edit it.
+  from the API's measure registry and its OpenAPI document; copy it here). Do not edit it. The script is
+  not on the API's `main` yet: take `api/scripts/export-measures.ts` from the branch
+  `claude/intelligent-lamport-v2w1n9`, run it over `main`'s `api/` with `INFLATION_ENABLED=true` (the
+  script opens the other dark routes itself; without that flag the inflation split loses its parameters).
   `src/server-measures.test.ts` holds the measure tools to it: every paid path `server.ts` calls has a
   live split, a call reaches the route its split names, and no default tool offers a `by` whose route
   is in `NOT_LIVE`. `npm run check:parity` also fails on a measure route the live API does not serve
